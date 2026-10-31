@@ -1168,6 +1168,47 @@ with tabs[5]:
         fig.update_layout(title=f"Ticket neto medio con IC {conf:.0%}", yaxis_title="Ticket neto", showlegend=False)
         st.plotly_chart(estilo(fig, 340))
 
+        # ---------------- Intervalo de confianza (fórmula z) ----------------
+        st.markdown("---")
+        st.markdown("### Intervalo de confianza")
+        st.markdown("Rango de valores dentro del cual esperamos encontrar el parámetro real de la población, "
+                    f"con un determinado nivel de confianza (1 − α) = **{conf:.0%}**.")
+        st.latex(r"\bar{x} \pm z^{*} \cdot \frac{\sigma}{\sqrt{n}}")
+        st.markdown("**Donde:**  \n"
+                    "• **x̄**: promedio de la muestra  \n"
+                    "• **z\\***: valor crítico que fija el margen de error (90% → 1.645 · 95% → 1.960 · 99% → 2.576)  \n"
+                    "• **σ**: variación (desviación estándar)  \n"
+                    "• **n**: tamaño de la muestra")
+        z_star = float(stats.norm.ppf(1 - (1 - conf) / 2))           # Valor crítico z del nivel de confianza elegido
+        filas_ic = []
+        for nombre, mask in [("Sábado y Domingo", pv["tipo_dia"] == "Sábado y Domingo"),
+                             ("Lunes a Viernes", pv["tipo_dia"] == "Lunes a Viernes")]:
+            x_g = pv.loc[mask, "ticket_neto"].to_numpy(float)
+            n_g, m_g, sd_g = len(x_g), x_g.mean(), x_g.std(ddof=1)   # n, x̄ y σ (desviación muestral)
+            ee_g = sd_g / np.sqrt(n_g)                               # Error estándar σ/√n
+            mg_g = z_star * ee_g                                     # Margen de error z*·σ/√n
+            filas_ic.append({"Grupo": nombre, "n": n_g, "x̄ (promedio)": m_g, "σ": sd_g, "σ/√n": ee_g,
+                             "z*": z_star, "Margen de error": mg_g,
+                             "Límite inferior": m_g - mg_g, "Límite superior": m_g + mg_g})
+        mostrar_tabla(pd.DataFrame(filas_ic).round(4))
+        ic_a_txt = f"[{filas_ic[0]['Límite inferior']:,.3f} ; {filas_ic[0]['Límite superior']:,.3f}]"
+        ic_b_txt = f"[{filas_ic[1]['Límite inferior']:,.3f} ; {filas_ic[1]['Límite superior']:,.3f}]"
+        # IC de la diferencia (Welch) y de la brecha porcentual
+        gb = r["media_b"]
+        brecha_lo, brecha_hi = r["lo"] / gb * 100, r["hi"] / gb * 100  # Brecha % = diferencia / media Lun–Vie
+        st.markdown(f"**Interpretación:** con {conf:.0%} de confianza, el ticket medio poblacional de sábado y domingo se "
+                    f"encuentra en {ic_a_txt} y el de lunes a viernes en {ic_b_txt}. La diferencia de medias (Sáb–Dom − Lun–Vie) "
+                    f"es {r['dif']:+.3f} con IC {conf:.0%} de {r['lo']:+.3f} a {r['hi']:+.3f}; expresada como brecha porcentual, "
+                    f"{r['brecha_pct']:+.2f}% (IC {conf:.0%}: {brecha_lo:+.2f}% a {brecha_hi:+.2f}%).")
+        if (r["lo"] > 0) or (r["hi"] < 0):
+            st.success("El intervalo de la diferencia no contiene el 0: coherente con el rechazo de H₀.")
+        else:
+            st.info("El intervalo de la diferencia contiene el 0: coherente con no rechazar H₀.")
+        st.caption("Con muestras tan grandes (n de cientos de miles) la distribución t y la normal coinciden, por eso se usa "
+                   "z*. El intervalo de la diferencia usa el error estándar de Welch (no asume varianzas iguales) y la brecha "
+                   "porcentual se obtiene dividiendo sus límites entre la media de Lun–Vie. Un intervalo muy estrecho refleja "
+                   "el tamaño de muestra, no un efecto grande: revisa también el d de Cohen.")
+
     st.markdown("---")
     st.markdown("### Prueba t de una muestra: ticket vs valor de referencia")
     x1 = pv["ticket_neto"].values                                    # Ticket de todas las cuentas válidas
