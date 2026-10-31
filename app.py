@@ -1007,6 +1007,41 @@ with tabs[4]:
                          labels={"id_tienda": "Tienda"}, title="% de cuentas con piqueo según si pidieron trago, por tienda")
             st.plotly_chart(estilo(fig, 330))
 
+            # ---- Chi-cuadrado POR TIENDA: tragos vs piqueos (2×2 dentro de cada tienda) ----
+            st.markdown("**Chi-cuadrado de independencia tragos × piqueos, calculado dentro de cada tienda**")
+            filas_ch = []
+            for tnd, gt in pvb.groupby("id_tienda"):
+                Tt, Pt = gt["tiene_trago"], gt["tiene_piqueo"]
+                a2, b2, c2, d2 = int((Tt & Pt).sum()), int((Tt & ~Pt).sum()), int((~Tt & Pt).sum()), int((~Tt & ~Pt).sum())
+                n2 = a2 + b2 + c2 + d2
+                if min(a2 + b2, c2 + d2) == 0 or min(a2 + c2, b2 + d2) == 0:   # Falta variación: no se puede calcular
+                    continue
+                obs2 = np.array([[a2, b2], [c2, d2]])
+                chi_t, p_t, _, esp_t = stats.chi2_contingency(obs2, correction=False)
+                or_t = (a2 * d2) / (b2 * c2) if b2 * c2 > 0 else np.nan
+                phi_t = np.sqrt(chi_t / n2) * (1 if (np.isnan(or_t) or or_t >= 1) else -1)
+                filas_ch.append({"Tienda": tnd, "Cuentas": n2,
+                                 "% con trago": (a2 + b2) / n2 * 100, "% con piqueo": (a2 + c2) / n2 * 100,
+                                 "% piqueo | con trago": a2 / (a2 + b2) * 100,
+                                 "% piqueo | sin trago": c2 / (c2 + d2) * 100,
+                                 "χ²(1)": chi_t, "p-valor": fmt_p(p_t), "φ": phi_t,
+                                 "Fuerza": fuerza_correlacion(phi_t), "Razón de momios": or_t,
+                                 "¿Asociación?": "Sí" if p_t <= alpha else "No",
+                                 "Esperado ≥ 5": "Sí" if (esp_t >= 5).all() else "No"})
+            if filas_ch:
+                tabla_ch = pd.DataFrame(filas_ch)
+                mostrar_tabla(tabla_ch.round(3))
+                fig = px.bar(tabla_ch, x="Tienda", y="φ", color_discrete_sequence=[COLOR_PRIMARIO],
+                             labels={"φ": "φ (asociación tragos–piqueos)"},
+                             title="Intensidad de la asociación tragos–piqueos por tienda (φ)")
+                fig.add_hline(y=0, line_color="black")
+                st.plotly_chart(estilo(fig, 320))
+                st.caption("φ es el equivalente a una correlación para dos variables de tipo sí/no (tiene trago, tiene piqueo): "
+                           "0 = independientes, positivo = quien pide trago tiende a pedir piqueo. Con muchas cuentas el p-valor "
+                           "casi siempre es significativo; decide con φ y el % de piqueo con y sin trago.")
+            else:
+                st.caption("Ninguna tienda tiene variación suficiente en tragos y piqueos para el chi-cuadrado.")
+
             seq = secuencia_pedido(tiendas_sel, f1, f2, cats_trago, cats_piq)
             st.markdown("**Secuencia temporal (¿qué se pide primero?)**")
             if seq:
@@ -1161,25 +1196,66 @@ with tabs[5]:
     else:
         st.caption("Se requieren al menos 2 meses completos y 2 tiendas en el filtro.")
 
-    st.markdown("### Chi-cuadrado de independencia: descuento vs variable categórica")
-    var_c = st.radio("Cruzar 'tiene descuento' con:", ["Tienda", "Tipo de día"], horizontal=True)
-    col_c = {"Tienda": "id_tienda", "Tipo de día": "tipo_dia"}[var_c]
-    ctab = pd.crosstab(pre_f[col_c], pre_f["tiene_descuento"])       # Tabla de contingencia observada
-    if ctab.shape[0] >= 2 and ctab.shape[1] >= 2:
-        chi2, p_chi, gl_chi, esp = stats.chi2_contingency(ctab)      # Estadístico, p, grados de libertad y esperados
-        n_t = ctab.values.sum()
-        v_cr = np.sqrt(chi2 / (n_t * (min(ctab.shape) - 1)))         # V de Cramér (tamaño del efecto)
-        ok5 = (esp >= 5).mean() * 100                                # % de celdas con esperado ≥ 5 (supuesto)
-        pct = (ctab.div(ctab.sum(axis=1), axis=0) * 100)             # % por fila
-        st.markdown(f"χ²({gl_chi}) = **{chi2:,.1f}**, {fmt_p(p_chi)}, V de Cramér = **{v_cr:.3f}** → "
-                    f"**{'se rechaza independencia' if p_chi <= alpha else 'no se rechaza independencia'}** (α = {alpha}). "
-                    f"Celdas con esperado ≥ 5: {ok5:.0f}%.")
-        if True in pct.columns:
-            fig = px.bar(pct[True].reset_index(), x=col_c, y=True, color_discrete_sequence=[COLOR_PRIMARIO],
-                         labels={True: "% de precuentas con descuento"}, title=f"% de cuentas con descuento según {var_c.lower()}")
-            st.plotly_chart(estilo(fig, 320))
+    st.markdown("### Chi-cuadrado de independencia con categorías de tragos y piqueos")
+    st.caption("La prueba trabaja con CONTEOS de cuentas en cada combinación de categorías; los porcentajes solo se usan "
+               "para leer y graficar. H₀: las dos variables son independientes · H₁: están asociadas.")
+    if not cats_trago or not cats_piq:
+        st.warning("Selecciona categorías de TRAGOS y PIQUEOS en la barra lateral (sección 'Variables de consumo').")
     else:
-        st.caption("Se necesitan al menos 2 categorías y ambos estados de descuento.")
+        NIV_T = ["0", "1-2", "3-4", "5+"]                            # Niveles de tragos por cuenta
+        NIV_P = ["0", "1", "2", "3+"]                                # Niveles de piqueos por cuenta
+        dfc = pre_f.copy()
+        dfc["nivel_tragos"] = pd.cut(dfc["n_tragos"], [-1, 0, 2, 4, np.inf], labels=NIV_T).astype(str)
+        dfc["nivel_piqueos"] = pd.cut(dfc["n_piqueos"], [-1, 0, 1, 2, np.inf], labels=NIV_P).astype(str)
+        VARS = {"Nivel de tragos": ("nivel_tragos", NIV_T), "Nivel de piqueos": ("nivel_piqueos", NIV_P),
+                "Perfil de cuenta": ("perfil", PERFILES), "Tienda": ("id_tienda", None),
+                "Tipo de día": ("tipo_dia", None),
+                "Franja horaria": ("franja", ["Madrugada (0–5h)", "Mañana (6–11h)", "Tarde (12–17h)",
+                                              "Noche (18–21h)", "Noche tardía (22–23h)"])}
+        cq1, cq2 = st.columns(2)
+        with cq1:
+            nom_f = st.selectbox("Variable en filas", list(VARS), index=0, key="chi_filas")
+        with cq2:
+            opciones_c = [v for v in VARS if v != nom_f]
+            nom_c = st.selectbox("Variable en columnas", opciones_c,
+                                 index=opciones_c.index("Tienda") if "Tienda" in opciones_c else 0, key="chi_cols")
+        (col_f, ord_f), (col_c, ord_c) = VARS[nom_f], VARS[nom_c]
+        ctab = pd.crosstab(dfc[col_f], dfc[col_c])                   # Tabla de CONTEOS observados
+        if ord_f: ctab = ctab.reindex([x for x in ord_f if x in ctab.index])
+        if ord_c: ctab = ctab[[x for x in ord_c if x in ctab.columns]]
+        if ctab.shape[0] >= 2 and ctab.shape[1] >= 2:
+            chi2, p_chi, gl_chi, esp = stats.chi2_contingency(ctab)  # χ², p, gl y frecuencias esperadas
+            n_t = ctab.values.sum()
+            v_cr = np.sqrt(chi2 / (n_t * (min(ctab.shape) - 1)))     # V de Cramér
+            ok5 = (esp >= 5).mean() * 100                            # Supuesto: esperado ≥ 5 en las celdas
+            st.markdown(f"**{nom_f} × {nom_c}**: χ²({gl_chi}) = **{chi2:,.1f}**, {fmt_p(p_chi)}, "
+                        f"V de Cramér = **{v_cr:.3f}** ({fuerza_correlacion(v_cr)}) → "
+                        f"**{'se rechaza independencia: hay asociación' if p_chi <= alpha else 'no se rechaza independencia'}** "
+                        f"(α = {alpha}). Celdas con esperado ≥ 5: {ok5:.0f}%.")
+            if ok5 < 80:
+                st.warning("Menos del 80% de las celdas tiene frecuencia esperada ≥ 5: la prueba pierde validez. "
+                           "Agrupa categorías con pocas cuentas (por ejemplo, junta '5+' con '3-4').")
+            if p_chi <= alpha and v_cr < 0.10:
+                st.warning("Significativa pero con efecto muy pequeño (V < 0.10): con muchas cuentas casi cualquier "
+                           "diferencia sale significativa.")
+            pct = ctab.div(ctab.sum(axis=1), axis=0) * 100           # % por fila (solo para leer/graficar)
+            larga = pct.reset_index().melt(id_vars=col_f, var_name=nom_c, value_name="pct")
+            fig = px.bar(larga, x=col_f, y="pct", color=nom_c, barmode="stack",
+                         labels={col_f: nom_f, "pct": f"% de cuentas (dentro de cada {nom_f.lower()})"},
+                         title=f"Composición de {nom_c.lower()} según {nom_f.lower()} (100% por barra)")
+            st.plotly_chart(estilo(fig, 380))
+            r1, r2 = st.columns(2)
+            with r1:
+                st.markdown("**Conteos observados (cuentas)**")
+                mostrar_tabla(ctab)
+            with r2:
+                resid = (ctab - esp) / np.sqrt(esp)                  # Residuos estandarizados
+                st.markdown("**Residuos estandarizados** (|valor| > 2 = celda que se aparta de lo esperado)")
+                fig_r = px.imshow(resid.round(1), text_auto=True, aspect="auto", color_continuous_scale="RdBu_r",
+                                  color_continuous_midpoint=0, labels=dict(color="Residuo"))
+                st.plotly_chart(estilo(fig_r, 320))
+        else:
+            st.caption("Se necesitan al menos 2 categorías en cada variable con cuentas en el filtro actual.")
 
     st.markdown("### Chi-cuadrado de bondad de ajuste: ¿las cuentas se reparten según los días disponibles?")
     obs = pre_f.groupby("dia_num").size().reindex(range(7), fill_value=0)  # Cuentas observadas por día
@@ -1202,3 +1278,4 @@ with tabs[5]:
     st.caption("Interpretación correcta del IC: si repitiéramos el muestreo muchas veces, el "
                f"{conf:.0%} de los intervalos construidos contendría el parámetro verdadero; el parámetro es fijo, "
                "el intervalo es el que varía. Con muestras masivas, reporta siempre tamaño del efecto e IC.")
+
