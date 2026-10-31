@@ -37,6 +37,7 @@ st.set_page_config(                          # DEBE ser la primera instrucción 
     initial_sidebar_state="expanded",        # La barra lateral de filtros inicia desplegada
 )
 
+FUENTE_DATOS = "dataset_pos_silver.parquet · "   # Prefijo para el campo "Fuente de origen" de las fichas técnicas
 RUTA_PARQUET = "dataset_pos_silver.parquet"  # Nombre del archivo local con la capa silver
 COLOR_PRIMARIO = "#7A0019"                   # Color vino institucional (identidad UNMSM)
 COLOR_SECUNDARIO = "#C8A24A"                 # Color dorado de acento
@@ -172,6 +173,30 @@ def corr_segura(x, y, metodo):
     f = {"pearson": stats.pearsonr, "spearman": stats.spearmanr, "kendall": stats.kendalltau}[metodo]
     r, p = f(x, y)
     return float(r), float(p)
+
+
+def ficha_tecnica(id_kpi, nombre, definicion, proposito, kpq, formula, unidad, tipo, bsc,
+                  fuente, frecuencia, custodio, meta, semaforo, owner):
+    """Ficha técnica estándar (The KPI Institute) en un panel plegable, con el mismo formato que la del KPI 3."""
+    filas = [
+        ("1. Identificación", "ID del KPI", id_kpi),
+        ("1. Identificación", "Nombre del KPI", nombre),
+        ("2. Definición y Uso", "Definición conceptual", definicion),
+        ("2. Definición y Uso", "Propósito estratégico", proposito),
+        ("2. Definición y Uso", "Pregunta clave (KPQ) – SMART", kpq),
+        ("3. Métodos de cálculo", "Fórmula matemática", formula),
+        ("3. Métodos de cálculo", "Unidad de medida", unidad),
+        ("4. Enfoque e impacto", "Tipo de indicador", tipo),
+        ("4. Enfoque e impacto", "Perspectiva BSC", bsc),
+        ("5. Perfil de datos", "Fuente de origen", fuente),
+        ("5. Perfil de datos", "Frecuencia de reporte", frecuencia),
+        ("5. Perfil de datos", "Custodio del dato", custodio),
+        ("6. Metas y rangos", "Meta objetivo", meta),
+        ("6. Metas y rangos", "Semáforo (R/A/V)", semaforo),
+        ("7. Gobernanza", "Dueño del KPI (owner)", owner),
+    ]
+    with st.expander("📋 Ficha técnica estándar del KPI (The KPI Institute)", expanded=False):
+        mostrar_tabla(pd.DataFrame(filas, columns=["Sección", "Campo técnico", "Especificación / contenido"]))
 
 
 # ---- Moda en RANGOS (clase modal) --------------------------------------------------
@@ -588,6 +613,25 @@ with tabs[0]:
     st.info("**Pregunta SMART:** ¿Cuál es el ticket neto mediano por precuenta en cada tienda durante el periodo "
             "filtrado y cuántas tiendas superan un CV del 35%, para priorizar en el próximo trimestre la "
             "estandarización de la carta y los precios en las tiendas más heterogéneas?")
+    ficha_tecnica(
+        "KPI-COM-001", "Ticket Neto Mediano por Precuenta y Variabilidad (CV)",
+        "Mediana del ticket neto por precuenta (suma de total_detalle_neto de todas las líneas de una id_precuenta) y "
+        "coeficiente de variación (CV) del ticket en cada tienda.",
+        "Detectar heterogeneidad de importes entre tiendas para estandarizar precios y carta.",
+        "¿Cuál es el ticket neto mediano por precuenta en cada tienda durante el periodo filtrado y cuántas tiendas "
+        "superan un CV del 35%, para priorizar en el próximo trimestre la estandarización de la carta y los precios "
+        "en las tiendas más heterogéneas?",
+        "Ticket neto = Σ (cantidad × precio_unitario − descuento_total) por id_precuenta · Mediana = P50 del ticket · "
+        "CV = (desviación estándar / media) × 100",
+        "Moneda del POS (mediana) y porcentaje (CV)",
+        "Lagging (histórico) / Descriptivo",
+        "Financiera",
+        FUENTE_DATOS + "columnas id_precuenta, id_tienda, cantidad, precio_unitario, descuento_total",
+        "Trimestral (con seguimiento mensual)",
+        "Analista de datos / administrador del POS",
+        "CV ≤ 35% en cada tienda (regla práctica de dispersión). Se excluyen cuentas con ticket ≤ 0.",
+        "Verde: CV < 15% · Amarillo: CV entre 15% y 35% · Rojo: CV > 35%",
+        "Gerencia Comercial y responsables de los establecimientos")
     st.caption(f"Se excluyen {len(pre_f) - len(pv):,} precuentas con ticket ≤ 0 (anulaciones totales). "
                "Se usa la mediana como KPI porque la distribución del ticket es asimétrica.")
 
@@ -685,6 +729,25 @@ with tabs[1]:
     st.info("**Pregunta SMART:** ¿Qué porcentaje del ingreso neto de cada tienda proviene de sus 3 categorías "
             "principales y en qué cuartil de ingreso se ubica cada tienda, para focalizar el mix de carta y las "
             "promociones del próximo trimestre?")
+    ficha_tecnica(
+        "KPI-COM-002", "% de Concentración del Ingreso Neto en las 3 Categorías Líderes",
+        "Porcentaje del ingreso neto de cada tienda que proviene de sus tres categorías de producto con mayor ingreso, "
+        "junto con el cuartil de ingreso de la tienda.",
+        "Reconocer las categorías de mayor aporte económico y orientar la composición de la carta y las promociones.",
+        "¿Qué porcentaje del ingreso neto de cada tienda proviene de sus 3 categorías principales y en qué cuartil de "
+        "ingreso se ubica cada tienda, para focalizar el mix de carta y las promociones del próximo trimestre?",
+        "(Ingreso neto de las 3 categorías con mayor ingreso / Ingreso neto total) × 100 · "
+        "Cuartil de ingreso = posición de la tienda según su ingreso neto total (Q1 a Q4)",
+        "Porcentaje (%) y cuartil",
+        "Lagging (histórico) / Descriptivo",
+        "Financiera",
+        FUENTE_DATOS + "columnas id_tienda, categoria_familia, total_detalle_neto",
+        "Mensual",
+        "Analista de datos / administrador del POS",
+        "Sin meta fija definida por el negocio: monitorear la tendencia. Un porcentaje alto indica dependencia de pocas "
+        "categorías (referencia de trabajo: principio de Pareto 80/20).",
+        "No aplica semáforo de cumplimiento (indicador de composición). Se interpreta con el Pareto de categorías y el cuartil de ingreso.",
+        "Gerencia Comercial y responsables de las tiendas")
     ing_t = cat_f.groupby("id_tienda")["total_detalle_neto"].sum()   # Ingreso neto por tienda
     top3_pct = cat_f.groupby("id_tienda")["total_detalle_neto"].apply(
         lambda s: s.nlargest(3).sum() / s.sum() * 100)               # % del ingreso de las 3 primeras categorías
@@ -826,6 +889,23 @@ with tabs[3]:
     st.info(f"**Pregunta SMART:** ¿Cuál es la variación porcentual mensual del ingreso neto por tienda y cuáles "
             f"registran caídas superiores al {umbral_caida}% en meses completos, para reasignar las acciones "
             "comerciales y de dotación del siguiente mes?")
+    ficha_tecnica(
+        "KPI-FIN-004", "% de Crecimiento Mensual del Ingreso Neto",
+        "Variación porcentual del ingreso neto de cada tienda respecto al mes anterior, calculada solo con meses "
+        "completos (al menos 90% de los días con datos).",
+        "Detectar caídas de ingresos por tienda para actuar sobre acciones comerciales y dotación de personal.",
+        f"¿Cuál es la variación porcentual mensual del ingreso neto por tienda y cuáles registran caídas superiores al "
+        f"{umbral_caida}% en meses completos, para reasignar las acciones comerciales y de dotación del siguiente mes?",
+        "((Ingreso neto del mes t / Ingreso neto del mes t−1) − 1) × 100, con Ingreso neto = Σ ticket_neto de las precuentas del mes",
+        "Porcentaje (%)",
+        "Lagging (histórico) / Outcome",
+        "Financiera",
+        FUENTE_DATOS + "columnas fecha_transaccion, id_tienda, total_detalle_neto (agregado por precuenta)",
+        "Mensual",
+        "Analista de datos / administrador del POS",
+        f"Sin caídas superiores al {umbral_caida}% entre meses completos consecutivos.",
+        f"Verde: variación ≥ 0% · Amarillo: caída entre 0% y {umbral_caida}% · Rojo: caída mayor a {umbral_caida}%",
+        "Gerencia Comercial y Gerencia de Operaciones")
     ing_tm = (pre_f.groupby(["id_tienda", "mes"])
                    .agg(ingreso_neto=("ticket_neto", "sum"), precuentas=("id_precuenta", "count"),
                         ticket_prom=("ticket_neto", "mean")).reset_index())  # SUM, COUNT y AVG por tienda-mes
@@ -882,6 +962,25 @@ with tabs[4]:
     st.info("**Pregunta SMART:** ¿Qué intensidad tiene la correlación monótona entre el número de tragos y el "
             "número de piqueos por precuenta en el periodo filtrado, supera |ρ| = 0.50 (moderadamente fuerte) y "
             "ambos productos elevan el ticket neto, para justificar combos trago + piqueo en el próximo trimestre?")
+    ficha_tecnica(
+        "KPI-COM-005", "Correlación (Spearman) entre Nº de Tragos y Nº de Piqueos por Precuenta",
+        "Coeficiente de correlación de Spearman (ρ) entre las unidades netas de tragos y de piqueos de cada precuenta. "
+        "Se complementa con Pearson, Kendall, la probabilidad de piqueo dado un trago, la razón de momios y el efecto sobre el ticket.",
+        "Evaluar si tragos y piqueos se compran juntos y si ambos elevan el ticket, para sustentar combos y promociones.",
+        "¿Qué intensidad tiene la correlación monótona entre el número de tragos y el número de piqueos por precuenta en "
+        "el periodo filtrado, supera |ρ| = 0.50 (moderadamente fuerte) y ambos productos elevan el ticket neto, para "
+        "justificar combos trago + piqueo en el próximo trimestre?",
+        "ρ = correlación de Pearson aplicada a los rangos de n_tragos y n_piqueos · "
+        "n_tragos / n_piqueos = Σ cantidad (neta de anulaciones) de las categorías elegidas como tragos / piqueos por id_precuenta",
+        "Coeficiente adimensional (−1 a 1)",
+        "Lagging (histórico) / Diagnóstico",
+        "Cliente",
+        FUENTE_DATOS + "columnas id_precuenta, categoria_familia, cantidad (las categorías de tragos y piqueos se eligen en la barra lateral)",
+        "Trimestral",
+        "Analista de datos / administrador del POS",
+        "|ρ| ≥ 0.50 (moderadamente fuerte) para justificar combos. Una asociación alta no implica causalidad.",
+        "Verde: |ρ| ≥ 0.50 · Amarillo: 0.30 ≤ |ρ| < 0.50 · Rojo: |ρ| < 0.30 (débil)",
+        "Gerencia Comercial y equipo de Analítica de Datos")
     if not cats_trago or not cats_piq:
         st.warning("Selecciona en la barra lateral al menos una categoría para TRAGOS y una para PIQUEOS "
                    "(sección 'Variables de consumo').")
@@ -1140,6 +1239,26 @@ with tabs[5]:
     st.info(f"**Pregunta SMART:** ¿Difiere significativamente (α = {alpha}) el ticket neto promedio entre sábado–domingo "
             f"y lunes–viernes y cuál es la brecha porcentual con su IC al {conf:.0%}, para decidir el próximo "
             "trimestre una política de dotación y promociones diferenciada por tipo de día?")
+    ficha_tecnica(
+        "KPI-COM-006", "Brecha Porcentual de Ticket Neto: Sábado y Domingo vs Lunes a Viernes",
+        "Diferencia porcentual entre el ticket neto promedio de las precuentas de sábado y domingo y el de lunes a viernes, "
+        "con prueba de hipótesis, tamaño del efecto e intervalo de confianza.",
+        "Decidir si conviene una política de promociones y dotación de personal diferenciada por tipo de día.",
+        f"¿Difiere significativamente (α = {alpha}) el ticket neto promedio entre sábado–domingo y lunes–viernes y cuál es "
+        f"la brecha porcentual con su IC al {conf:.0%}, para decidir el próximo trimestre una política de dotación y "
+        "promociones diferenciada por tipo de día?",
+        "Brecha % = (Ticket medio Sáb–Dom / Ticket medio Lun–Vie − 1) × 100 · Prueba t de Welch (H₀: μ(Sáb–Dom) = μ(Lun–Vie)) · "
+        "d de Cohen = diferencia de medias / desviación combinada · IC = x̄ ± z* · σ/√n",
+        "Porcentaje (%), estadístico t, d de Cohen",
+        "Lagging (histórico) / Diagnóstico",
+        "Financiera y Cliente",
+        FUENTE_DATOS + "columnas fecha_transaccion (tipo de día) y total_detalle_neto (ticket por precuenta)",
+        "Trimestral",
+        "Analista de datos / administrador del POS",
+        f"Evaluar significancia (α = {alpha}) y relevancia práctica (|d| ≥ 0.2) de la brecha, con IC al {conf:.0%}.",
+        "Verde: sin diferencia significativa o efecto trivial (|d| < 0.2) · Amarillo: significativa con efecto pequeño "
+        "(0.2 ≤ |d| < 0.5) · Rojo: significativa con efecto mediano o grande (|d| ≥ 0.5)",
+        "Gerencia Comercial, Gerencia de Operaciones y equipo de Analítica de Datos")
     st.caption("H₀: μ(Sáb–Dom) = μ(Lun–Vie) · H₁: μ(Sáb–Dom) ≠ μ(Lun–Vie). Prueba bilateral por defecto.")
     if not res_b:
         st.warning("Se necesitan precuentas en ambos grupos de días para comparar.")
@@ -1319,4 +1438,3 @@ with tabs[5]:
     st.caption("Interpretación correcta del IC: si repitiéramos el muestreo muchas veces, el "
                f"{conf:.0%} de los intervalos construidos contendría el parámetro verdadero; el parámetro es fijo, "
                "el intervalo es el que varía. Con muestras masivas, reporta siempre tamaño del efecto e IC.")
-
