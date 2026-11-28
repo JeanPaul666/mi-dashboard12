@@ -2,20 +2,20 @@
 """
 Dashboard de ventas Rústica – esquema de 3 capas + accesibilidad (WCAG 2.1 / Okabe-Ito)
 CAPA 1: Resumen ejecutivo   (¿Cómo vamos?)
-CAPA 2: Tendencias          (¿Dónde está ocurriendo?)  -> incluye la descomposición de la brecha
-CAPA 3: Diagnóstico         (¿Por qué pasa esto?)       -> tops + tablas de detalle
+CAPA 2: Tendencias          (¿Dónde está ocurriendo?)  -> vista global: evolución, composición,
+                                                          comparativa, descomposición de la brecha, días
+CAPA 3: Diagnóstico         (¿Por qué pasa esto?)      -> detalle: top familias, top productos y tablas
 Dataset: dataset_pos_silver.parquet (en la raíz del repositorio)
 
-Accesibilidad aplicada (Sesión 12):
-  · Paleta Okabe-Ito (sin rojo/verde): Cumple = azul, En observación = ámbar, No cumple = bermellón.
-  · Nunca solo color (WCAG 1.4.1): cada estado lleva icono (● ✓ / ▲ / ■), texto y trama
-    (sólido / rayado / punteado).
-  · Contraste medido con la fórmula WCAG (la misma de WebAIM): texto ≥ 7:1 (AAA), gráficos ≥ 3:1.
-  · Texto alternativo para cada gráfico (WCAG 1.1.1), títulos descriptivos (2.4.6).
-  · Simulador de visión (Normal / Protanopia / Deuteranopia / Escala de grises).
-  · Alto contraste y reducción de movimiento.
+Criterios de accesibilidad aplicados (Sesión 12):
+  * Paleta Okabe-Ito (azul = cumple / naranja = no cumple), nada de rojo-verde.
+  * Nunca solo color (WCAG 1.4.1): etiquetas, flechas ▲▼, texto de estado y tramas (rayado).
+  * Contraste de texto >= 7:1 (AAA) y de gráficos >= 3:1 (WCAG 1.4.11). Verificado con WebAIM.
+  * Simulador de visión (protanopia, deuteranopia, escala de grises) y modo Alto Contraste AAA.
+  * Texto alternativo en cada gráfico, títulos descriptivos en paneles y ejes, chunking por capas.
 """
 import calendar
+import html
 import io
 from pathlib import Path
 
@@ -28,78 +28,146 @@ import streamlit as st
 st.set_page_config(page_title="Dashboard de Ventas – Rústica", page_icon="📊", layout="wide")
 
 # ----------------------------------------------------------------------------
-# Constantes y paleta accesible (Okabe-Ito)
+# Constantes
 # ----------------------------------------------------------------------------
 DATA_FILE = Path(__file__).parent / "dataset_pos_silver.parquet"
 MESES = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"]
 DIAS = ["Lun", "Mar", "Mié", "Jue", "Vie", "Sáb", "Dom"]
 T1, T2 = "Turno 1 (10:00–19:00)", "Turno 2 (19:00–03:00)"
+WEBAIM = "https://webaim.org/resources/contrastchecker/"
 
-# Colores Okabe-Ito
-AZUL = "#0072B2"      # Cumple
-AMBAR = "#E69F00"     # En observación
-BERM = "#D55E00"      # No cumple (bermellón)
-CELESTE = "#56B4E9"   # barras sobre fondo oscuro
-# Neutros y textos
-TXT = "#1A1A1A"       # texto principal (17.4:1 sobre blanco)
-TXT_SUB = "#3A3F4B"   # texto secundario (10.5:1)
-GRIS_LIN = "#4A5568"  # líneas de referencia (7.5:1)
-GRIS_BAR = "#6B7280"  # barras neutras (4.8:1)
-FONDO = "#FFFFFF"
-FONDO_SIDEBAR = "#F0F4F8"
-OBS_BORDE = "#6B4700"  # borde/trama de "En observación"
-MAL_BORDE = "#5C2800"  # borde de "No cumple"
-AZUL_OSC = "#003A5C"
-PREV_LIN = "#8A3F6E"   # año anterior (7.0:1)
-# Tarjetas KPI (texto blanco sobre azul marino -> AAA)
-KPI_BG = "#081F3A"
-KPI_SUB = "#E6EDF5"
-GRANATE = "#7A1126"    # etiquetas de capa (texto blanco -> AAA)
-CONCL_BG = "#FFF3D6"
-# Pills (texto oscuro sobre fondo claro del mismo matiz -> AAA)
-PILL = {
-    "ok": ("#D6ECF8", "#003A5C"),
-    "obs": ("#FFE9B0", "#4A3200"),
-    "mal": ("#FBD8C0", "#5A2300"),
-    "nd": ("#E5E7EB", "#1A1A1A"),
+# ----------------------------------------------------------------------------
+# Paletas accesibles (Okabe-Ito) + simulador de visión
+# ----------------------------------------------------------------------------
+# Okabe-Ito oficiales: azul #0072B2, naranja #E69F00, celeste #56B4E9, bermellón #D55E00, púrpura #CC79A7
+PALETAS = {
+    "normal": dict(
+        BG="#FFFFFF", TXT="#1A1A1A", TXT2="#404040", CARD="#F4F6F8", GRID="#D9D9D9",
+        OK="#0072B2",        # cumple meta  (azul Okabe-Ito)
+        NO="#E69F00",        # no cumple    (naranja Okabe-Ito) -> siempre con trama + borde oscuro
+        NEUTRO="#767676", META="#1A1A1A", MOVIL="#D55E00", PREV="#CC79A7",
+        TAG1="#7B1426", TAG2="#004B78", TAG3="#1A1A1A", TAGTXT="#FFFFFF",
+        PILL_OK=("#E3F1FA", "#00395C"), PILL_NO=("#FFF1D6", "#6B3F00"), PILL_NEU=("#EDEDED", "#1A1A1A"),
+        BW=1.2, LW=1.0,
+    ),
+    "alto": dict(  # Alto contraste AAA: negro sobre blanco, bordes gruesos
+        BG="#FFFFFF", TXT="#000000", TXT2="#000000", CARD="#FFFFFF", GRID="#BDBDBD",
+        OK="#00507A", NO="#E69F00", NEUTRO="#595959", META="#000000", MOVIL="#A34700", PREV="#8A3B6B",
+        TAG1="#000000", TAG2="#000000", TAG3="#000000", TAGTXT="#FFFFFF",
+        PILL_OK=("#FFFFFF", "#00304F"), PILL_NO=("#FFFFFF", "#4A2A00"), PILL_NEU=("#FFFFFF", "#000000"),
+        BW=2.2, LW=2.0,
+    ),
 }
 
-# Estados: icono + texto + patrón (nunca solo color)
-ESTADOS = {
-    "ok": dict(icono="● ✓", txt="Cumple"),
-    "obs": dict(icono="▲", txt="En observación"),
-    "mal": dict(icono="■", txt="No cumple"),
-    "nd": dict(icono="◆", txt="Sin dato"),
+# Matrices de Machado et al. (2009), severidad 1.0, aplicadas en RGB lineal
+_M_PROT = np.array([[0.152286, 1.052583, -0.204868], [0.114503, 0.786281, 0.099216], [-0.003882, -0.048116, 1.051998]])
+_M_DEUT = np.array([[0.367322, 0.860646, -0.227968], [0.280085, 0.672501, 0.047413], [-0.011820, 0.042940, 0.968881]])
+
+
+def _a_lineal(c):
+    return np.where(c <= 0.04045, c / 12.92, ((c + 0.055) / 1.055) ** 2.4)
+
+
+def _a_srgb(c):
+    c = np.clip(c, 0, 1)
+    return np.where(c <= 0.0031308, c * 12.92, 1.055 * c ** (1 / 2.4) - 0.055)
+
+
+def simular_hex(h, modo):
+    """Devuelve el color tal como lo vería una persona con la condición elegida."""
+    if modo == "Normal" or not isinstance(h, str) or not h.startswith("#") or len(h) != 7:
+        return h
+    rgb = _a_lineal(np.array([int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]))
+    if modo == "Escala de grises":
+        y = float(rgb @ np.array([0.2126, 0.7152, 0.0722]))
+        out = np.array([y, y, y])
+    else:
+        out = (_M_PROT if modo == "Protanopia" else _M_DEUT) @ rgb
+    out = (_a_srgb(out) * 255).round().astype(int)
+    return "#{:02X}{:02X}{:02X}".format(*out)
+
+
+def lum_rel(h):
+    r, g, b = _a_lineal(np.array([int(h.lstrip("#")[i:i + 2], 16) / 255 for i in (0, 2, 4)]))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def contraste(a, b):
+    """Razón de contraste WCAG (misma fórmula que WebAIM Contrast Checker)."""
+    la, lb = sorted([lum_rel(a), lum_rel(b)], reverse=True)
+    return (la + 0.05) / (lb + 0.05)
+
+
+# ---- Barra superior: simulador de visión + alto contraste (como en el modelo del profesor) ----
+with st.container(border=True):
+    c_sim, c_hc = st.columns([3.4, 1])
+    with c_sim:
+        modo_vis = st.radio("👁 Simulador de visión", ["Normal", "Protanopia", "Deuteranopia", "Escala de grises"],
+                            horizontal=True, help="Muestra los colores del dashboard como los ve una persona con "
+                                                  "daltonismo. Si el mensaje se sigue entendiendo, el diseño es accesible.")
+    with c_hc:
+        alto = st.checkbox("◐ Alto contraste AAA", help="Texto negro sobre blanco, bordes gruesos y colores más oscuros.")
+
+BASE = PALETAS["alto" if alto else "normal"]          # colores reales (para auditar contraste)
+P = {k: (tuple(simular_hex(x, modo_vis) for x in v) if isinstance(v, tuple) else
+         (simular_hex(v, modo_vis) if isinstance(v, str) else v)) for k, v in BASE.items()}
+# El texto y los fondos neutros nunca cambian de tono; solo los colores de datos/estado se simulan.
+for k in ("BG", "TXT", "TXT2", "CARD", "GRID"):
+    P[k] = BASE[k]
+
+CSS = """
+<style>
+.block-container {padding-top: 1.2rem;}
+.stApp {background:__BG__; color:__TXT__; __FILTRO__}
+.stApp h1, .stApp h2, .stApp h3, .stApp p, .stApp li, .stApp label, .stApp .stMarkdown {color:__TXT__;}
+[data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p {color:__TXT2__ !important; opacity:1 !important; font-size:.88rem;}
+[data-testid="stMetricLabel"], [data-testid="stMetricLabel"] p {color:__TXT2__ !important; opacity:1 !important;}
+*:focus-visible {outline:3px solid __TXT__ !important; outline-offset:2px;}
+.capa {display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin: 6px 0 10px 0;}
+.capa .tag {color:__TAGTXT__; font-weight:800; padding:6px 28px 6px 16px;
+            clip-path: polygon(0 0, 88% 0, 100% 50%, 88% 100%, 0 100%); background:__TAG1__;}
+.capa .tag.c2 {background:__TAG2__;} .capa .tag.c3 {background:__TAG3__;}
+.capa .tit {font-weight:800; font-size:1.08rem; color:__TXT__;}
+.capa .preg {color:__TXT__; text-decoration:underline; text-decoration-thickness:2px; text-underline-offset:3px;}
+.capa .sub {color:__TXT2__; font-size:.88rem;}
+.kpi {border:__BW__px solid __TXT2__; background:__CARD__; color:__TXT__; border-radius:10px; padding:14px 16px; height:100%;}
+.kpi .lbl {font-size:.78rem; font-weight:800; letter-spacing:.04em; color:__TXT2__;}
+.kpi .val {font-size:2rem; font-weight:800; line-height:1.15; color:__TXT__;}
+.kpi .sub {font-size:.85rem; color:__TXT2__;}
+.pill {display:inline-block; margin-top:6px; padding:3px 10px; border-radius:6px; font-size:.86rem; font-weight:800;}
+.pill.mal {background:__PNO_BG__; color:__PNO_TX__; border:__BW__px solid __PNO_TX__;}
+.pill.bien {background:__POK_BG__; color:__POK_TX__; border:__BW__px solid __POK_TX__;}
+.pill.alerta {background:__PNE_BG__; color:__PNE_TX__; border:__BW__px solid __PNE_TX__;}
+.bar {height:12px; border-radius:6px; background:__BG__; border:__BW__px solid __TXT__; margin:8px 0 4px 0; overflow:hidden;}
+.bar > div {height:100%;}
+.bar > div.ok {background:__OK__;}
+.bar > div.no {background:repeating-linear-gradient(45deg, __NO__ 0, __NO__ 5px, __BG__ 5px, __BG__ 8px);}
+.concl {border-radius:8px; padding:10px 14px; background:__PNO_BG__; color:__PNO_TX__; border:__BW__px solid __PNO_TX__;
+        border-left-width:8px; font-size:.95rem;}
+.concl.ok {background:__POK_BG__; color:__POK_TX__; border-color:__POK_TX__;}
+.alt {font-size:.85rem; color:__TXT2__; border-left:4px solid __TXT2__; padding:2px 10px; margin:4px 0 10px 0;}
+.alt b {color:__TXT__;}
+</style>
+"""
+_tok = {
+    "__BG__": P["BG"], "__TXT__": P["TXT"], "__TXT2__": P["TXT2"], "__CARD__": P["CARD"], "__OK__": P["OK"], "__NO__": P["NO"],
+    "__TAG1__": P["TAG1"], "__TAG2__": P["TAG2"], "__TAG3__": P["TAG3"], "__TAGTXT__": P["TAGTXT"],
+    "__PNO_BG__": P["PILL_NO"][0], "__PNO_TX__": P["PILL_NO"][1], "__POK_BG__": P["PILL_OK"][0],
+    "__POK_TX__": P["PILL_OK"][1], "__PNE_BG__": P["PILL_NEU"][0], "__PNE_TX__": P["PILL_NEU"][1],
+    "__BW__": f"{P['BW']:g}", "__FILTRO__": "filter:grayscale(1);" if modo_vis == "Escala de grises" else "",
 }
-PATRON = {  # relleno, trama, color de la trama y borde por estado (Plotly)
-    "ok": dict(shape="", bg=AZUL, fg=AZUL, line=AZUL_OSC),
-    "obs": dict(shape="/", bg=AMBAR, fg=OBS_BORDE, line=OBS_BORDE),
-    "mal": dict(shape=".", bg=BERM, fg="#FFFFFF", line=MAL_BORDE),
-}
+for _k, _v in _tok.items():
+    CSS = CSS.replace(_k, _v)
+st.markdown(CSS, unsafe_allow_html=True)
 
 
 # ----------------------------------------------------------------------------
-# Utilidades de contraste (misma fórmula WCAG 2.x que usa WebAIM)
+# Utilidades
 # ----------------------------------------------------------------------------
-def _lum(hex_):
-    h = hex_.lstrip("#")
-    r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
-    f = lambda c: c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
-    return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b)
+def esc(x):
+    return html.escape(str(x))
 
 
-def contraste(fg, bg):
-    a, b = sorted([_lum(fg), _lum(bg)], reverse=True)
-    return (a + 0.05) / (b + 0.05)
-
-
-def webaim(fg, bg):
-    return f"https://webaim.org/resources/contrastchecker/?fcolor={fg.lstrip('#')}&bcolor={bg.lstrip('#')}"
-
-
-# ----------------------------------------------------------------------------
-# Utilidades de formato
-# ----------------------------------------------------------------------------
 def soles(x):
     """Formatea montos: S/ 570 mil, S/ 1.2 M."""
     if x is None or pd.isna(x):
@@ -112,7 +180,7 @@ def soles(x):
 
 
 def soles_s(x):
-    """Monto con signo explícito (el signo también comunica, no solo el color)."""
+    """Monto con signo explícito (+/−) para no depender del color."""
     return f"{'+' if x >= 0 else '−'}{soles(abs(x))}"
 
 
@@ -123,6 +191,67 @@ def var_pct(a, b):
 
 def lbl_ym(ym):
     return f"{MESES[ym % 100 - 1]} {ym // 100}"
+
+
+def mostrar(fig):
+    """Estilo accesible común a todos los gráficos + compatibilidad entre versiones de Streamlit."""
+    fig.update_layout(
+        margin=dict(l=10, r=10, t=30, b=10), legend=dict(orientation="h", y=1.14, font=dict(color=P["TXT"])),
+        paper_bgcolor=P["BG"], plot_bgcolor=P["BG"], font=dict(color=P["TXT"], size=13),
+        hoverlabel=dict(bgcolor="#FFFFFF", font=dict(color="#1A1A1A", size=13)),
+    )
+    fig.update_xaxes(linecolor=P["TXT"], gridcolor=P["GRID"], tickfont=dict(color=P["TXT"]), title_font=dict(color=P["TXT"]),
+                     automargin=True, title_standoff=8)
+    fig.update_yaxes(linecolor=P["TXT"], gridcolor=P["GRID"], tickfont=dict(color=P["TXT"]), title_font=dict(color=P["TXT"]), automargin=True)
+    try:
+        st.plotly_chart(fig, width="stretch", theme=None)
+    except TypeError:
+        st.plotly_chart(fig, use_container_width=True, theme=None)
+
+
+def tabla(df, **kw):
+    try:
+        st.dataframe(df, hide_index=True, width="stretch", **kw)
+    except TypeError:
+        st.dataframe(df, hide_index=True, use_container_width=True, **kw)
+
+
+def alt(texto):
+    """Texto alternativo visible: la versión 'hablada' del gráfico (WCAG 1.1.1)."""
+    st.markdown(f'<div class="alt" role="note"><b>Descripción del gráfico:</b> {esc(texto)}</div>', unsafe_allow_html=True)
+
+
+def cabecera(n, titulo, pregunta, sub):
+    st.markdown(
+        f'<div class="capa" role="heading" aria-level="2"><span class="tag c{n}">CAPA {n}</span>'
+        f'<span class="tit">{titulo} <span class="preg">{pregunta}</span></span>'
+        f'<span class="sub">{sub}</span></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def tarjeta(titulo, valor, sub="", pill="", clase="", barra=None, estado_barra="ok"):
+    barra_html = ""
+    if barra is not None:
+        w = min(max(barra, 0), 100)
+        barra_html = (f'<div class="bar" role="progressbar" aria-label="{esc(titulo)}" aria-valuemin="0" '
+                      f'aria-valuemax="100" aria-valuenow="{w:.0f}"><div class="{estado_barra}" style="width:{w:.2f}%"></div></div>')
+    pill_html = f'<div class="pill {clase}">{pill}</div>' if pill else ""
+    st.markdown(
+        f'<div class="kpi" role="group" aria-label="{esc(titulo)}"><div class="lbl">{titulo}</div><div class="val">{valor}</div>'
+        f'{barra_html}<div class="sub">{sub}</div>{pill_html}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def marcador_ok(**extra):
+    return dict(color=P["OK"], line=dict(color=P["TXT"], width=P["BW"]), **extra)
+
+
+def marcador_no(**extra):
+    """'No cumple' = naranja + RAYADO + borde oscuro: se distingue aunque se pierda el color."""
+    return dict(color=P["NO"], line=dict(color=P["TXT"], width=P["BW"]),
+                pattern=dict(shape="/", fgcolor=P["TXT"], bgcolor=P["NO"], size=7, solidity=0.35, fillmode="replace"), **extra)
 
 
 # ----------------------------------------------------------------------------
@@ -257,7 +386,7 @@ if df.empty:
 tiene_turno = df["hora"].nunique() > 1
 
 # ----------------------------------------------------------------------------
-# Sidebar: filtros, meta, ticket y accesibilidad
+# Sidebar: filtros, meta y ticket
 # ----------------------------------------------------------------------------
 yms = sorted(df["ym"].unique())
 por_defecto = yms.index(202501) if 202501 in yms else len(yms) - 1
@@ -272,8 +401,6 @@ st.sidebar.markdown("**Meta de venta del mes**")
 crec = st.sidebar.slider("Crecimiento objetivo vs año anterior (%)", -20, 50, 5)
 meta_manual = st.sidebar.checkbox("Ingresar meta manual (S/)")
 meta_valor = st.sidebar.number_input("Meta (S/)", min_value=0.0, value=500000.0, step=10000.0) if meta_manual else None
-UMBRAL_OBS = st.sidebar.slider("Umbral de «En observación» (% de la meta)", 50, 99, 90,
-                               help="≥ 100 % = Cumple · entre este umbral y 100 % = En observación · menos = No cumple.")
 
 st.sidebar.markdown("**Ticket promedio**")
 opciones_ticket = ["Por transacción"] + (["Por comensal (depurado)"] if mapa["comens"] else [])
@@ -281,190 +408,8 @@ modo_ticket = st.sidebar.radio("Cálculo", opciones_ticket, help="El nº de come
                                "al depurar se excluyen comandas fuera del rango permitido.")
 tope_comens = st.sidebar.number_input("Máx. comensales por comanda", 1, 1000, 30) if modo_ticket != "Por transacción" else 30
 
-st.sidebar.markdown("**♿ Accesibilidad**")
-alto_contraste = st.sidebar.checkbox("Alto contraste", help="Bordes más gruesos y fondos puros para quien necesita mayor separación entre bloques.")
-reducir_mov = st.sidebar.checkbox("Reducir movimiento", help="Desactiva transiciones y animaciones.")
-
-
-def estado(p):
-    """Estado según % de cumplimiento (≥100 cumple · ≥umbral observación · resto no cumple)."""
-    if p is None or pd.isna(p) or not np.isfinite(p):
-        return "nd"
-    return "ok" if p >= 100 else ("obs" if p >= UMBRAL_OBS else "mal")
-
-
-# ----------------------------------------------------------------------------
-# Estilos (todos los colores explícitos para poder medir el contraste)
-# ----------------------------------------------------------------------------
-CSS = """
-<style>
-.stApp {background:%FONDO%; color:%TXT%;}
-[data-testid="stSidebar"] {background:%FONDO_SIDEBAR%;}
-[data-testid="stCaptionContainer"], .stCaption, [data-testid="stCaptionContainer"] p {color:%TXT_SUB% !important; opacity:1 !important; font-size:.88rem !important;}
-[data-testid="stWidgetLabel"] p, label p {color:%TXT% !important;}
-.block-container {padding-top: 1.6rem;}
-.capa {display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin: 10px 0 10px 0;}
-.capa .tag {background:%GRANATE%; color:#FFFFFF; font-weight:800; padding:6px 16px;
-            clip-path: polygon(0 0, 88% 0, 100% 50%, 88% 100%, 0 100%); padding-right:28px;}
-.capa .tit {font-weight:800; font-size:1.1rem; color:%TXT%;}
-.capa .preg {color:%GRANATE%;}
-.capa .sub {color:%TXT_SUB%; font-size:.9rem;}
-.ptit {font-size:1rem; font-weight:800; letter-spacing:.02em; color:%TXT%; margin:.3rem 0 .4rem 0; padding:0;}
-.kpi {background:%KPI_BG%; color:#FFFFFF; border:2px solid %KPI_BG%; border-radius:10px; padding:14px 16px; height:100%;}
-.kpi .lbl {color:#FFFFFF; font-size:.78rem; font-weight:800; letter-spacing:.04em;}
-.kpi .val {color:#FFFFFF; font-size:2rem; font-weight:800; line-height:1.15;}
-.kpi .sub {color:%KPI_SUB%; font-size:.85rem;}
-.pill {display:inline-block; margin-top:8px; padding:4px 10px; border-radius:6px; font-size:.85rem; font-weight:800; border:2px solid;}
-.pill.ok {background:%OK_BG%; color:%OK_FG%; border-color:%OK_FG%;}
-.pill.obs {background:%OBS_BG%; color:%OBS_FG%; border-color:%OBS_FG%;}
-.pill.mal {background:%MAL_BG%; color:%MAL_FG%; border-color:%MAL_FG%;}
-.pill.nd {background:%ND_BG%; color:%ND_FG%; border-color:%ND_FG%;}
-.bar {height:12px; border-radius:6px; background:#243F5E; border:1px solid #9FB6CC; margin:8px 0 6px 0; overflow:hidden;}
-.bar > div {height:100%;}
-.bar > div.ok {background:%CELESTE%;}
-.bar > div.obs {background:repeating-linear-gradient(45deg,%AMBAR% 0 6px,%OBS_BORDE% 6px 9px);}
-.bar > div.mal {background:radial-gradient(#FFFFFF 1.4px,transparent 1.9px) 0 0/7px 7px, %BERM%;}
-.mini {border:2px solid %GRIS_LIN%; border-radius:8px; padding:8px 12px; margin-top:6px; background:#FFFFFF;}
-.mini .lbl {font-size:.8rem; font-weight:700; color:%TXT_SUB%;}
-.mini .val {font-size:1.3rem; font-weight:800; color:%TXT%;}
-.concl {border-radius:8px; padding:10px 14px; background:%CONCL_BG%; color:%TXT%; border-left:8px solid %BERM%; font-size:.95rem;}
-.aviso {border-radius:6px; padding:8px 12px; background:#F3F4F6; color:%TXT%; border-left:6px solid %GRIS_LIN%; font-size:.9rem; margin:6px 0;}
-.leyenda {display:flex; flex-wrap:wrap; gap:18px; align-items:center; padding:8px 12px; border:2px solid %GRIS_LIN%; border-radius:8px; color:%TXT%; font-size:.9rem; font-weight:600; margin:4px 0 8px 0;}
-.leyenda b {font-weight:800;}
-.sw {display:inline-block; width:16px; height:16px; vertical-align:-3px; margin-right:6px;}
-.sw.ok {border-radius:50%; background:%AZUL%; border:2px solid %AZUL_OSC%;}
-.sw.obs {clip-path:polygon(50% 0,100% 100%,0 100%); background:repeating-linear-gradient(45deg,%AMBAR% 0 3px,%OBS_BORDE% 3px 5px);}
-.sw.mal {background:radial-gradient(#FFFFFF 1.2px,transparent 1.6px) 0 0/5px 5px, %BERM%; border:2px solid %MAL_BORDE%;}
-</style>
-"""
-ALTO = """
-<style>
-.stApp, .stApp p, .stApp li, .stApp h1, .stApp h2, .stApp h3 {color:#000000 !important;}
-.kpi {background:#000000; border:4px solid #FFFFFF; outline:2px solid #000000;}
-.kpi .sub {color:#FFFFFF;}
-.mini, .leyenda, .aviso {border-width:3px; border-color:#000000;}
-.pill {border-width:3px;}
-.concl {border:3px solid #000000; border-left-width:10px;}
-</style>
-"""
-MOV = "<style>*{animation:none !important; transition:none !important; scroll-behavior:auto !important;}</style>"
-
-_sub = dict(FONDO=FONDO, TXT=TXT, FONDO_SIDEBAR=FONDO_SIDEBAR, TXT_SUB=TXT_SUB, GRANATE=GRANATE, KPI_BG=KPI_BG,
-            KPI_SUB=KPI_SUB, CELESTE=CELESTE, AMBAR=AMBAR, OBS_BORDE=OBS_BORDE, BERM=BERM, GRIS_LIN=GRIS_LIN,
-            CONCL_BG=CONCL_BG, AZUL=AZUL, AZUL_OSC=AZUL_OSC, MAL_BORDE=MAL_BORDE,
-            OK_BG=PILL["ok"][0], OK_FG=PILL["ok"][1], OBS_BG=PILL["obs"][0], OBS_FG=PILL["obs"][1],
-            MAL_BG=PILL["mal"][0], MAL_FG=PILL["mal"][1], ND_BG=PILL["nd"][0], ND_FG=PILL["nd"][1])
-_css = CSS
-for _k, _v in _sub.items():
-    _css = _css.replace(f"%{_k}%", _v)
-st.markdown(_css + (ALTO if alto_contraste else "") + (MOV if reducir_mov else ""), unsafe_allow_html=True)
-
-
-# ----------------------------------------------------------------------------
-# Componentes HTML / gráficos reutilizables
-# ----------------------------------------------------------------------------
-def tabla(df_, **kw):
-    try:
-        st.dataframe(df_, hide_index=True, width="stretch", **kw)
-    except TypeError:
-        st.dataframe(df_, hide_index=True, use_container_width=True, **kw)
-
-
-def ptit(texto):
-    """Título descriptivo de cada panel (WCAG 2.4.6)."""
-    st.markdown(f'<h3 class="ptit">{texto}</h3>', unsafe_allow_html=True)
-
-
-def cabecera(n, titulo, pregunta, sub):
-    st.markdown(
-        f'<div class="capa" role="heading" aria-level="2"><span class="tag">CAPA {n}</span>'
-        f'<span class="tit">{titulo} <span class="preg">{pregunta}</span></span>'
-        f'<span class="sub">{sub}</span></div>',
-        unsafe_allow_html=True,
-    )
-
-
-def pill_html(est, texto=""):
-    e = ESTADOS[est]
-    extra = f" · {texto}" if texto else ""
-    return f'<div class="pill {est}">{e["icono"]} {e["txt"]}{extra}</div>'
-
-
-def tarjeta(titulo, valor, sub="", est=None, detalle="", barra=None):
-    barra_html = ""
-    if barra is not None and est:
-        barra_html = (f'<div class="bar"><div class="{est}" '
-                      f'style="width:{min(max(barra, 0), 100):.2f}%"></div></div>')
-    pill = pill_html(est, detalle) if est else ""
-    st.markdown(
-        f'<div class="kpi"><div class="lbl">{titulo}</div><div class="val">{valor}</div>'
-        f'{barra_html}<div class="sub">{sub}</div>{pill}</div>',
-        unsafe_allow_html=True,
-    )
-
-
-def mini(titulo, valor, est):
-    st.markdown(f'<div class="mini"><div class="lbl">{titulo}</div><div class="val">{valor}</div>'
-                f'{pill_html(est)}</div>', unsafe_allow_html=True)
-
-
-def aviso(texto, icono="ℹ"):
-    st.markdown(f'<div class="aviso"><b>{icono}</b> {texto}</div>', unsafe_allow_html=True)
-
-
-def alt(texto):
-    """Texto alternativo del gráfico (lectores de pantalla): tipo + datos + hallazgo. WCAG 1.1.1"""
-    with st.expander("♿ Texto alternativo del gráfico"):
-        st.write(texto)
-
-
-def mostrar(fig):
-    """Tema accesible común: fondo blanco, texto oscuro ≥ 12 px, líneas de eje con contraste."""
-    fig.update_layout(
-        template="plotly_white", paper_bgcolor=FONDO, plot_bgcolor=FONDO,
-        font=dict(color=TXT, size=13),
-        margin=dict(l=10, r=10, t=70, b=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, font=dict(size=12, color=TXT)),
-    )
-    fig.update_xaxes(linecolor=GRIS_LIN, tickfont=dict(color=TXT), title_font=dict(color=TXT), automargin=True)
-    fig.update_yaxes(linecolor=GRIS_LIN, gridcolor="#D9DEE5", tickfont=dict(color=TXT), title_font=dict(color=TXT))
-    try:
-        st.plotly_chart(fig, width="stretch")
-    except TypeError:
-        st.plotly_chart(fig, use_container_width=True)
-
-
-def ratios(vals, metas):
-    v, m = np.asarray(vals, dtype=float), np.asarray(metas, dtype=float)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return np.where(m > 0, v / m * 100, np.nan)
-
-
-def etq_estado(e):
-    return {"ok": "● ✓ Cumple (≥ 100 % de la meta)",
-            "obs": f"▲ En observación ({UMBRAL_OBS}–99 %)",
-            "mal": f"■ No cumple (< {UMBRAL_OBS} %)"}[e]
-
-
-def barras_estado(fig, x, vals, metas, hover):
-    """Una serie por estado, cada una con su trama: sólido / rayado / punteado (no solo color)."""
-    x = list(x)
-    r = ratios(vals, metas)
-    vals = np.asarray(vals, dtype=float)
-    est = [estado(p) for p in r]
-    for e in ("ok", "obs", "mal"):
-        idx = [i for i, s in enumerate(est) if s == e]
-        p = PATRON[e]
-        marker = dict(color=p["bg"], line=dict(color=p["line"], width=1.5))
-        if p["shape"]:
-            marker["pattern"] = dict(shape=p["shape"], fgcolor=p["fg"], bgcolor=p["bg"], size=6, solidity=0.45)
-        fig.add_bar(
-            x=[x[i] for i in idx] or [None], y=[vals[i] for i in idx] or [None], name=etq_estado(e), marker=marker,
-            customdata=np.array([r[i] for i in idx]) if idx else None, hovertemplate=hover,
-        )
-    fig.update_layout(barmode="overlay")
-    return est
-
+st.sidebar.markdown("**Accesibilidad**")
+st.sidebar.markdown(f"[Verificador de contraste WebAIM ↗]({WEBAIM}) — la auditoría de este dashboard está al final de la página.")
 
 # ----------------------------------------------------------------------------
 # Subconjuntos y KPIs
@@ -539,8 +484,8 @@ def meta_por_tienda_dia(meta_total, ym_, d_cur, d_prev):
 meta_s, meta_tbl = meta_por_tienda_dia(meta, ym, cur, prev)
 
 
-def brecha_detalle(dim):
-    """Venta real vs meta asignada (meta repartida según participación del año anterior) por elemento."""
+def brecha_df(dim):
+    """Venta real, meta asignada y brecha de cada elemento (meta repartida según participación del año anterior)."""
     c = cur.groupby(dim, observed=True)["venta"].sum()
     p = prev.groupby(dim, observed=True)["venta"].sum()
     c.index, p.index = c.index.astype(str), p.index.astype(str)
@@ -548,16 +493,243 @@ def brecha_detalle(dim):
     c, p = c.reindex(idx, fill_value=0.0), p.reindex(idx, fill_value=0.0)
     if p.sum() <= 0 or not meta:
         return None
-    asig = p / p.sum() * meta
-    d = pd.DataFrame({"Venta real": c, "Meta asignada": asig})
-    d["Brecha"] = d["Venta real"] - d["Meta asignada"]
-    d["Cumplimiento %"] = ratios(d["Venta real"], d["Meta asignada"])
-    return d.sort_values("Brecha")
+    d = pd.DataFrame({"venta": c, "meta": p / p.sum() * meta})
+    d["brecha"] = d["venta"] - d["meta"]
+    return d.sort_values("brecha")
 
 
 def brecha(dim):
-    d = brecha_detalle(dim)
-    return None if d is None else d["Brecha"]
+    d = brecha_df(dim)
+    return None if d is None else d["brecha"]
+
+
+# ----------------------------------------------------------------------------
+# CAPA 1 – Resumen ejecutivo
+# ----------------------------------------------------------------------------
+st.title(f"Ventas Rústica – {lbl_ym(ym)}")
+cabecera(1, "RESUMEN EJECUTIVO", "¿Cómo vamos?", "Cifras clave para una visión inmediata del negocio.")
+
+b_fam = brecha("familia")
+bajo = k["venta"] < meta
+if bajo:
+    txt = f"▼ Venta {soles(meta - k['venta'])} por debajo de la meta ({cumpl:.2f}% de cumplimiento)."
+    if b_fam is not None and b_fam.iloc[0] < 0:
+        txt += f" Mayor caída: <b>{esc(b_fam.index[0])}</b> ({soles_s(b_fam.iloc[0])})."
+else:
+    txt = f"▲ Meta alcanzada: {cumpl:.2f}% de cumplimiento (+{soles(k['venta'] - meta)})."
+st.markdown(f'<div class="concl {"" if bajo else "ok"}" role="status"><b>Conclusión:</b> {txt}</div>', unsafe_allow_html=True)
+st.write("")
+
+c1, c2, c3, c4 = st.columns(4)
+with c1:
+    tarjeta("VENTA TOTAL DEL MES", soles(k["venta"]), f"Meta: {soles(meta)}  ·  "
+            + (f"faltan {soles(meta - k['venta'])}" if bajo else "meta superada"),
+            barra=cumpl, estado_barra="no" if bajo else "ok")
+with c2:
+    dpp = cumpl - 100
+    tarjeta("% CUMPLIMIENTO DE VENTA", f"{cumpl:.2f} %", "Meta definida al inicio del mes",
+            f"{'▼ Bajo la meta:' if dpp < 0 else '▲ Sobre la meta:'} {abs(dpp):.2f} pp", "mal" if dpp < 0 else "bien")
+with c3:
+    v = var_pct(k["trans"], kp["trans"])
+    tarjeta("Nº DE TRANSACCIONES", f"{k['trans']:,}", "Comandas atendidas",
+            "● Sin comparativa" if v is None else f"{'▼ Baja' if v < 0 else '▲ Sube'} {abs(v):.1f}% vs. {lbl_ym(ym_prev)}",
+            "alerta" if v is None else ("mal" if v < 0 else "bien"))
+with c4:
+    v = var_pct(k["ticket"], kp["ticket"])
+    tarjeta("TICKET PROMEDIO", f"S/ {k['ticket']:,.1f}", modo_ticket,
+            "● Sin comparativa" if v is None else f"{'▼ Baja' if v < 0 else '▲ Sube'} {abs(v):.1f}% vs. {lbl_ym(ym_prev)}",
+            "alerta" if v is None else ("mal" if v < 0 else "bien"))
+
+# ----------------------------------------------------------------------------
+# CAPA 2 – Tendencias y comparaciones (vista GLOBAL)
+# ----------------------------------------------------------------------------
+st.write("")
+cabecera(2, "TENDENCIAS Y COMPARACIONES", "¿Dónde está ocurriendo?",
+         "Evolución, composición, comparativa y brecha para identificar áreas de foco.")
+col_a, col_b, col_c = st.columns([2.6, 1.1, 0.75])
+
+
+def serie_diaria(d, ym_):
+    y, m = divmod(ym_, 100)
+    s = d.groupby("fecha_dia")["venta"].sum()
+    return s.reindex(pd.date_range(f"{y}-{m:02d}-01", periods=calendar.monthrange(y, m)[1]), fill_value=0.0)
+
+
+with col_a:
+    st.markdown(f"**EVOLUCIÓN DE VENTAS DEL MES – {lbl_ym(ym)}**")
+    s = serie_diaria(cur, ym)
+    s_vis = s[: cur["fecha_dia"].max()]
+    ver_prev = st.checkbox(f"Mostrar {lbl_ym(ym_prev)}", value=False)
+    metas_vis = meta_s.reindex(s_vis.index)
+    mask_bajo = (s_vis.values < metas_vis.values)
+    fig = go.Figure()
+    fig.add_bar(x=s_vis.index[~mask_bajo], y=s_vis.values[~mask_bajo], name="Día sobre la meta ▲ (sólido)",
+                marker=marcador_ok())
+    fig.add_bar(x=s_vis.index[mask_bajo], y=s_vis.values[mask_bajo], name="Día bajo la meta ▼ (rayado)",
+                marker=marcador_no())
+    fig.add_scatter(x=meta_s.index, y=meta_s.values, mode="lines", name="Meta diaria (por tienda y día)",
+                    line=dict(color=P["META"], dash="dash", shape="hv", width=2 * P["LW"]))
+    fig.add_scatter(x=s_vis.index, y=s_vis.rolling(7, min_periods=1).mean(), mode="lines",
+                    name="Media móvil (7 días)", line=dict(color=P["MOVIL"], width=3 * P["LW"]))
+    if ver_prev and not prev.empty:
+        sp = serie_diaria(prev, ym_prev).values[:ndias]
+        fig.add_scatter(x=pd.date_range(s.index[0], periods=len(sp)), y=sp, mode="lines",
+                        name=lbl_ym(ym_prev), line=dict(color=P["PREV"], dash="dot", width=3 * P["LW"]))
+    fig.update_layout(barmode="overlay")
+    fig.update_yaxes(title="Venta diaria (S/)")
+    fig.update_xaxes(
+        tickmode="array", tickvals=list(s.index),
+        ticktext=[f"{DIAS[d.day_of_week]}<br>{d.day}" for d in s.index],
+        tickfont=dict(size=10, color=P["TXT"]), title=f"Día del mes – {MESES[m_ - 1]} {y_}")
+    fig.update_traces(hovertemplate="%{x|%d/%m/%Y}: S/ %{y:,.0f}<extra>%{fullData.name}</extra>")
+    mostrar(fig)
+    ult7 = s_vis.tail(7)
+    meta7 = meta_s.reindex(ult7.index)
+    dif = (ult7.sum() / meta7.sum() - 1) * 100
+    nb = int((ult7 < meta7).sum())
+    st.caption(f"Últimos {len(ult7)} días: venta {abs(dif):.1f}% {'por debajo' if dif < 0 else 'por encima'} de la meta. "
+               f"{nb} de {len(ult7)} días no alcanzaron el objetivo diario.")
+    mejor, peor_d = s_vis.idxmax(), s_vis.idxmin()
+    alt(f"Barras de la venta diaria de {lbl_ym(ym)}: total {soles(k['venta'])} contra una meta de {soles(meta)}. "
+        f"{int(mask_bajo.sum())} de {len(s_vis)} días quedaron bajo la meta diaria (barras rayadas). "
+        f"Mejor día: {mejor:%d/%m/%Y} con {soles(s_vis.max())}; día más bajo: {peor_d:%d/%m/%Y} con {soles(s_vis.min())}.")
+
+with col_b:
+    st.markdown("**COMPOSICIÓN DE LA VENTA**")
+    dim_lbl = st.radio("Ver por", ["Por Familia", "Por Turno"], horizontal=True, label_visibility="collapsed")
+    dim = {"Por Familia": "familia", "Por Turno": "turno"}[dim_lbl]
+    if dim == "turno" and not tiene_turno:
+        st.info("El dataset no tiene hora; no se puede calcular el turno.")
+    else:
+        g = cur.groupby(dim, observed=True)["venta"].sum().sort_values(ascending=False)
+        g.index = g.index.astype(str)
+        if len(g) > 7:
+            g = pd.concat([g.iloc[:7], pd.Series({"Otros": g.iloc[7:].sum()})])
+        pct = g / g.sum() * 100
+        figc = go.Figure(go.Bar(x=pct.values, y=pct.index, orientation="h",
+                                marker=dict(color=[P["NEUTRO"] if i == "Otros" else P["OK"] for i in pct.index],
+                                            line=dict(color=P["TXT"], width=P["BW"])),
+                                text=[f"{v:.1f}%" for v in pct.values], textposition="outside",
+                                textfont=dict(color=P["TXT"]),
+                                customdata=[soles(v) for v in g.values], hovertemplate="%{y}: %{customdata}<extra></extra>"))
+        figc.update_yaxes(autorange="reversed", title=dim_lbl.replace("Por ", ""))
+        figc.update_xaxes(visible=False, range=[0, pct.max() * 1.5])
+        mostrar(figc)
+        top3 = ", ".join(f"{i} {v:.1f}%" for i, v in pct.head(3).items())
+        alt(f"Barras horizontales con el porcentaje de la venta de {lbl_ym(ym)} {dim_lbl.lower()}. Las mayores: {top3}.")
+
+with col_c:
+    st.markdown("**COMPARATIVA DE VENTAS**")
+    met = st.radio("Métrica", ["Venta", "Transacciones", "Ticket promedio"], horizontal=True, label_visibility="collapsed")
+    clave = {"Venta": "venta", "Transacciones": "trans", "Ticket promedio": "ticket"}[met]
+    etq = [lbl_ym(ym_prev), lbl_ym(ym)]
+    vals = [kp[clave], k[clave]]
+    cols_b = [P["NEUTRO"], P["OK"]]
+    formas = ["", ""]
+    if clave == "venta":
+        etq.append("Meta"); vals.append(meta); cols_b.append(P["NO"]); formas.append("/")
+    fmt = (lambda x: soles(x)) if clave == "venta" else ((lambda x: f"{x:,.0f}") if clave == "trans" else (lambda x: f"S/ {x:,.1f}"))
+    figk = go.Figure(go.Bar(x=etq, y=[0 if pd.isna(v) else v for v in vals],
+                            marker=dict(color=cols_b, line=dict(color=P["TXT"], width=P["BW"]),
+                                        pattern=dict(shape=formas, fgcolor=P["TXT"], size=7, solidity=0.35, fillmode="overlay")),
+                            text=[fmt(v) for v in vals], textposition="outside", textfont=dict(color=P["TXT"])))
+    figk.update_yaxes(visible=False, rangemode="tozero")
+    figk.update_xaxes(title=f"Período · {met}")
+    mostrar(figk)
+    alt(f"{met}: " + "; ".join(f"{e} {fmt(0 if pd.isna(v) else v)}" for e, v in zip(etq, vals)) + ".")
+    if clave == "ticket":
+        st.warning("⚠️ La data de comensales tiene problemas de calidad; evalúa el ticket con cautela.")
+    v1 = var_pct(k[clave], kp[clave])
+    m1 = m2 = st.container()
+    m1.metric(f"Var. vs {lbl_ym(ym_prev)}", "—" if v1 is None else f"{v1:+.1f}%")
+    if clave == "venta":
+        vm = var_pct(k["venta"], meta)
+        m2.metric("Var. vs meta", "—" if vm is None else f"{vm:+.2f}%")
+
+# ---- Capa 2 (fila 2): descomposición de la brecha (movida desde la Capa 3) + días de la semana ----
+st.write("")
+col_g, col_h = st.columns([1.5, 1.1])
+
+
+def cascada(d):
+    """Cascada de la brecha vs meta con barras (rellenas = sobre meta, rayadas = bajo meta)."""
+    b = d["brecha"]
+    if len(b) > 6:
+        top = b.reindex(b.abs().nlargest(6).index).sort_values()
+        b = pd.concat([top, pd.Series({"Otros": b.drop(top.index).sum()})])
+    cats = list(b.index) + ["Total"]
+    vals_ = list(b.values)
+    bases, acum = [], 0.0
+    for v in vals_:
+        bases.append(acum)
+        acum += v
+    vals_.append(acum)
+    bases.append(0.0)
+    fig_ = go.Figure()
+    for signo, nombre, mk in ((True, "Sobre la meta ▲ (sólido)", marcador_ok()), (False, "Bajo la meta ▼ (rayado)", marcador_no())):
+        ix = [i for i, v in enumerate(vals_) if (v >= 0) == signo]
+        if not ix:
+            continue
+        fig_.add_bar(x=[cats[i] for i in ix], y=[vals_[i] for i in ix], base=[bases[i] for i in ix], name=nombre, marker=mk,
+                     text=[f"{'▲' if vals_[i] >= 0 else '▼'} {soles_s(vals_[i])}" for i in ix], textposition="outside",
+                     textfont=dict(color=P["TXT"]), cliponaxis=False,
+                     hovertemplate="%{x}: %{text}<extra></extra>")
+    fig_.update_layout(barmode="overlay")
+    fig_.update_xaxes(categoryorder="array", categoryarray=cats)
+    return fig_, b, acum
+
+
+with col_g:
+    st.markdown("**DESCOMPOSICIÓN DE LA BRECHA DE VENTA**")
+    dim3_lbl = st.selectbox("Dimensión", ["Familia"] + (["Turno"] if tiene_turno else []))
+    dbrecha = brecha_df(dim3_lbl.lower())
+    if dbrecha is None:
+        st.info(f"Se necesita venta de {lbl_ym(ym_prev)} para repartir la meta por {dim3_lbl.lower()}.")
+    else:
+        figw, b_plot, b_total = cascada(dbrecha)
+        figw.update_yaxes(title="Diferencia vs meta (S/)")
+        figw.update_xaxes(title=f"{dim3_lbl} (aporte a la brecha total)")
+        mostrar(figw)
+        st.caption("Supuesto: la meta se reparte según la participación de cada elemento en el año anterior. "
+                   "El detalle numérico está en la Capa 3.")
+        peores = [f"{i} ({soles_s(v)})" for i, v in b_plot.items() if v < 0 and i != "Otros"][:3]
+        alt(f"Cascada de la brecha de venta frente a la meta por {dim3_lbl.lower()}. Resultado total: {soles_s(b_total)} "
+            f"({'bajo' if b_total < 0 else 'sobre'} la meta). "
+            + (f"Mayores caídas: {', '.join(peores)}." if peores else "Ningún elemento queda bajo su meta."))
+
+with col_h:
+    st.markdown("**¿QUÉ DÍAS DE LA SEMANA HAY QUE IMPULSAR?**")
+    wd = s_vis.groupby(s_vis.index.day_of_week).mean().reindex(range(7))
+    wm = meta_s.groupby(meta_s.index.day_of_week).mean().reindex(range(7))
+    bajo_d = [(pd.notna(v) and v < t) for v, t in zip(wd, wm)]
+    figd = go.Figure()
+    for flag, nombre, mk in ((False, "Día sobre la meta ▲ (sólido)", marcador_ok()), (True, "Día bajo la meta ▼ (rayado)", marcador_no())):
+        ix = [i for i in range(7) if bajo_d[i] == flag and pd.notna(wd.iloc[i])]
+        if ix:
+            figd.add_bar(x=[DIAS[i] for i in ix], y=[wd.iloc[i] for i in ix], name=nombre, marker=mk)
+    figd.add_scatter(x=DIAS, y=wm.values, mode="lines+markers", name="Meta diaria",
+                     line=dict(color=P["META"], dash="dash", width=2 * P["LW"]), marker=dict(symbol="diamond", size=8, color=P["META"]))
+    figd.update_layout(barmode="overlay")
+    figd.update_yaxes(title="Venta promedio (S/)")
+    figd.update_xaxes(title="Día de la semana", categoryorder="array", categoryarray=DIAS)
+    figd.update_traces(hovertemplate="%{x}: S/ %{y:,.0f}<extra>%{fullData.name}</extra>")
+    mostrar(figd)
+    cumpl_dow = (wd / wm).dropna()
+    if not cumpl_dow.empty:
+        peor = cumpl_dow.idxmin()
+        st.caption(f"Día más débil vs. su meta: **{DIAS[int(peor)]}** "
+                   f"(promedio {soles(wd[peor])} vs. meta {soles(wm[peor])}).")
+        dias_bajo = [DIAS[i] for i in range(7) if bajo_d[i]]
+        alt(f"Barras con la venta promedio por día de la semana contra su meta. "
+            + (f"Días bajo la meta (rayados): {', '.join(dias_bajo)}." if dias_bajo else "Todos los días superan su meta.")
+            + f" El más débil es {DIAS[int(peor)]}.")
+
+# ----------------------------------------------------------------------------
+# CAPA 3 – Diagnóstico (DETALLE)
+# ----------------------------------------------------------------------------
+st.write("")
+cabecera(3, "DIAGNÓSTICO", "¿Por qué pasa esto?", "Detalle y tablas para investigar las causas raíz.")
+col_e, col_f = st.columns(2)
 
 
 def variaciones(dim, min_prev):
@@ -571,273 +743,38 @@ def variaciones(dim, min_prev):
     return t.reset_index().rename(columns={"index": dim})
 
 
-def serie_diaria(d, ym_):
-    y, m = divmod(ym_, 100)
-    s = d.groupby("fecha_dia")["venta"].sum()
-    return s.reindex(pd.date_range(f"{y}-{m:02d}-01", periods=calendar.monthrange(y, m)[1]), fill_value=0.0)
+def tendencia(v):
+    return "▲ Crece" if v >= 0 else "▼ Cae"
 
-
-# ----------------------------------------------------------------------------
-# Encabezado, simulador de visión y leyenda de estados
-# ----------------------------------------------------------------------------
-st.title(f"Ventas Rústica – {lbl_ym(ym)}")
-
-SVG_FILTROS = (
-    '<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>'
-    '<filter id="sim-prot" color-interpolation-filters="linearRGB"><feColorMatrix type="matrix" '
-    'values="0.152286 1.052583 -0.204868 0 0 0.114503 0.786281 0.099216 0 0 -0.003882 -0.048116 1.051998 0 0 0 0 0 1 0"/></filter>'
-    '<filter id="sim-deut" color-interpolation-filters="linearRGB"><feColorMatrix type="matrix" '
-    'values="0.367322 0.860646 -0.227968 0 0 0.280085 0.672501 0.047413 0 0 -0.011820 0.042940 0.968881 0 0 0 0 0 1 0"/></filter>'
-    '</defs></svg>'
-)
-FILTRO_CSS = {"Normal": "none", "Protanopia": "url(#sim-prot)", "Deuteranopia": "url(#sim-deut)",
-              "Escala de grises": "grayscale(1)"}
-sim = st.radio("👁 Simulador de visión", list(FILTRO_CSS), horizontal=True,
-               help="Previsualiza cómo vería este dashboard una persona con daltonismo o una impresión en blanco y negro.")
-st.markdown(SVG_FILTROS + f'<style>[data-testid="stAppViewContainer"]{{filter:{FILTRO_CSS[sim]};}}</style>',
-            unsafe_allow_html=True)
-if sim != "Normal":
-    st.caption(f"Vista simulada: **{sim}**. Los estados siguen distinguiéndose por icono, texto y trama, no solo por color.")
-
-st.markdown(
-    '<div class="leyenda" role="note"><b>Leyenda de estados:</b>'
-    '<span><i class="sw ok"></i>● ✓ Cumple (≥ 100 % de la meta)</span>'
-    f'<span><i class="sw obs"></i>▲ En observación ({UMBRAL_OBS}–99 %)</span>'
-    f'<span><i class="sw mal"></i>■ No cumple (&lt; {UMBRAL_OBS} %)</span></div>',
-    unsafe_allow_html=True,
-)
-
-# ----------------------------------------------------------------------------
-# CAPA 1 – Resumen ejecutivo
-# ----------------------------------------------------------------------------
-cabecera(1, "RESUMEN EJECUTIVO", "¿Cómo vamos?", "Cifras clave para una visión inmediata del negocio.")
-
-b_fam = brecha("familia")
-if k["venta"] < meta:
-    txt = f"Venta {soles(meta - k['venta'])} por debajo de la meta ({cumpl:.2f}% de cumplimiento)."
-    if b_fam is not None and b_fam.iloc[0] < 0:
-        txt += f" Mayor caída: <b>{b_fam.index[0]}</b> ({soles_s(b_fam.iloc[0])})."
-else:
-    txt = f"Meta alcanzada: {cumpl:.2f}% de cumplimiento (+{soles(k['venta'] - meta)})."
-st.markdown(f'<div class="concl"><b>▲ Conclusión:</b> {txt}</div>', unsafe_allow_html=True)
-st.write("")
-
-c1, c2, c3, c4 = st.columns(4)
-bajo = k["venta"] < meta
-e_cumpl = estado(cumpl)
-with c1:
-    tarjeta("VENTA TOTAL DEL MES", soles(k["venta"]),
-            f"Meta: {soles(meta)}  ·  " + (f"faltan {soles(meta - k['venta'])}" if bajo else "meta superada"),
-            e_cumpl, "", barra=cumpl)
-with c2:
-    dpp = cumpl - 100
-    tarjeta("% CUMPLIMIENTO DE VENTA", f"{cumpl:.2f} %", "Meta definida al inicio del mes",
-            e_cumpl, f"{'▼' if dpp < 0 else '▲'} {abs(dpp):.2f} pp vs. meta")
-with c3:
-    v = var_pct(k["trans"], kp["trans"])
-    tarjeta("Nº DE TRANSACCIONES", f"{k['trans']:,}", "Comandas atendidas",
-            "nd" if v is None else estado(100 + v),
-            "sin comparativa" if v is None else f"{'▼' if v < 0 else '▲'} {v:+.1f}% vs. {lbl_ym(ym_prev)}")
-with c4:
-    v = var_pct(k["ticket"], kp["ticket"])
-    tarjeta("TICKET PROMEDIO", f"S/ {k['ticket']:,.1f}", modo_ticket,
-            "nd" if v is None else estado(100 + v),
-            "sin comparativa" if v is None else f"{'▼' if v < 0 else '▲'} {v:+.1f}% vs. {lbl_ym(ym_prev)}")
-
-# ----------------------------------------------------------------------------
-# CAPA 2 – Tendencias y comparaciones (incluye la descomposición de la brecha)
-# ----------------------------------------------------------------------------
-st.write("")
-cabecera(2, "TENDENCIAS Y COMPARACIONES", "¿Dónde está ocurriendo?",
-         "Evolución, composición, comparativa y origen de la brecha para identificar áreas de foco.")
-col_a, col_b, col_c = st.columns([2.6, 1.1, 0.75])
-
-with col_a:
-    ptit(f"EVOLUCIÓN DE VENTAS DEL MES – {lbl_ym(ym)}")
-    s = serie_diaria(cur, ym)
-    s_vis = s[: cur["fecha_dia"].max()]
-    meta_vis = meta_s.reindex(s_vis.index)
-    ver_prev = st.checkbox(f"Mostrar {lbl_ym(ym_prev)}", value=False)
-    fig = go.Figure()
-    est_dias = barras_estado(
-        fig, s_vis.index, s_vis.values, meta_vis.values,
-        hover="%{x|%d/%m/%Y}<br>Venta: S/ %{y:,.0f}<br>%{customdata:.0f}% de la meta del día<extra></extra>")
-    media7 = s_vis.rolling(7, min_periods=1).mean()
-    fig.add_scatter(x=meta_s.index, y=meta_s.values, mode="lines", name="Meta diaria (por tienda y día)",
-                    line=dict(color=GRIS_LIN, dash="dash", shape="hv", width=2.5),
-                    hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>")
-    fig.add_scatter(x=s_vis.index, y=media7, mode="lines", name="Media móvil (7 días)",
-                    line=dict(color="#000000", width=2.5), hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>")
-    if ver_prev and not prev.empty:
-        sp = serie_diaria(prev, ym_prev).values[:ndias]
-        fig.add_scatter(x=pd.date_range(s.index[0], periods=len(sp)), y=sp, mode="lines",
-                        name=lbl_ym(ym_prev), line=dict(color=PREV_LIN, dash="dot", width=3),
-                        hovertemplate="%{y:,.0f}<extra>%{fullData.name}</extra>")
-    fig.update_yaxes(title="S/")
-    fig.update_xaxes(
-        tickmode="array", tickvals=list(s.index),
-        ticktext=[f"{DIAS[d.day_of_week]}<br>{d.day}" for d in s.index],
-        tickfont=dict(size=11, color=TXT), title=f"{MESES[m_ - 1]} {y_}")
-    mostrar(fig)
-    ult7 = s_vis.tail(7)
-    meta7 = meta_s.reindex(ult7.index)
-    dif = (ult7.sum() / meta7.sum() - 1) * 100
-    nb = int((ult7 < meta7).sum())
-    st.caption(f"Últimos {len(ult7)} días: venta {abs(dif):.1f}% {'por debajo' if dif < 0 else 'por encima'} de la meta. "
-               f"{nb} de {len(ult7)} días no alcanzaron el objetivo diario.")
-    alt(f"Barras de venta diaria de {lbl_ym(ym)}: de {len(s_vis)} días con datos, {est_dias.count('ok')} cumplieron la meta diaria, "
-        f"{est_dias.count('obs')} quedaron en observación y {est_dias.count('mal')} no la cumplieron. "
-        f"El día más alto fue el {s_vis.idxmax():%d/%m/%Y} con {soles(s_vis.max())} y el más bajo el {s_vis.idxmin():%d/%m/%Y} "
-        f"con {soles(s_vis.min())}. Sobre las barras se dibujan la meta diaria (línea discontinua) y la media móvil de 7 días, "
-        f"que cierra en {soles(media7.iloc[-1])}. En los últimos {len(ult7)} días la venta estuvo {abs(dif):.1f}% "
-        f"{'por debajo' if dif < 0 else 'por encima'} de la meta.")
-
-    with st.expander("¿Qué días de la semana hay que impulsar?", expanded=False):
-        wd = s_vis.groupby(s_vis.index.day_of_week).mean().reindex(range(7))
-        wm = meta_s.groupby(meta_s.index.day_of_week).mean().reindex(range(7))
-        figw = go.Figure()
-        est_sem = barras_estado(
-            figw, DIAS, wd.values, wm.values,
-            hover="%{x}<br>Venta promedio: S/ %{y:,.0f}<br>%{customdata:.0f}% de la meta<extra></extra>")
-        figw.add_scatter(x=DIAS, y=wm.values, mode="lines+markers", name="Meta diaria",
-                         line=dict(color=GRIS_LIN, dash="dash", width=2.5), marker=dict(symbol="diamond", size=9, color=GRIS_LIN))
-        figw.update_yaxes(title="Venta promedio (S/)")
-        mostrar(figw)
-        cumpl_dow = (wd / wm).dropna()
-        if not cumpl_dow.empty:
-            peor = cumpl_dow.idxmin()
-            st.caption(f"Día más débil vs. su meta: **{DIAS[int(peor)]}** "
-                       f"(promedio {soles(wd[peor])} vs. meta {soles(wm[peor])}).")
-            alt(f"Barras de venta promedio por día de la semana contra su meta (diamantes unidos por línea discontinua). "
-                f"{est_sem.count('ok')} días cumplen, {est_sem.count('obs')} están en observación y {est_sem.count('mal')} no cumplen. "
-                f"El día más débil es {DIAS[int(peor)]}: promedio {soles(wd[peor])} frente a una meta de {soles(wm[peor])}.")
-
-with col_b:
-    ptit("COMPOSICIÓN DE LA VENTA")
-    dim_lbl = st.radio("Ver por", ["Por Familia", "Por Turno"], horizontal=True, label_visibility="collapsed")
-    dim = {"Por Familia": "familia", "Por Turno": "turno"}[dim_lbl]
-    if dim == "turno" and not tiene_turno:
-        aviso("El dataset no tiene hora; no se puede calcular el turno.")
-    else:
-        g = cur.groupby(dim, observed=True)["venta"].sum().sort_values(ascending=False)
-        g.index = g.index.astype(str)
-        if len(g) > 7:
-            g = pd.concat([g.iloc[:7], pd.Series({"Otros": g.iloc[7:].sum()})])
-        pct = g / g.sum() * 100
-        figc = go.Figure(go.Bar(x=pct.values, y=pct.index, orientation="h",
-                                marker=dict(color=[GRIS_BAR if i == "Otros" else AZUL for i in pct.index],
-                                            line=dict(color=TXT, width=1)),
-                                text=[f"{v:.1f}%" for v in pct.values], textposition="outside",
-                                textfont=dict(size=12, color=TXT),
-                                customdata=[soles(v) for v in g.values], hovertemplate="%{y}: %{customdata}<extra></extra>"))
-        figc.update_yaxes(autorange="reversed")
-        figc.update_xaxes(visible=False, range=[0, pct.max() * 1.25])
-        mostrar(figc)
-        top3 = ", ".join(f"{i} ({v:.1f}%)" for i, v in list(pct.items())[:3])
-        alt(f"Barras horizontales con la participación de cada {dim_lbl.lower().replace('por ', '')} en la venta del mes, de mayor a menor. "
-            f"Los tres primeros son: {top3}. Cada barra muestra su porcentaje al final.")
-
-with col_c:
-    ptit("COMPARATIVA DE VENTAS")
-    met = st.radio("Métrica", ["Venta", "Transacciones", "Ticket promedio"], horizontal=True, label_visibility="collapsed")
-    clave = {"Venta": "venta", "Transacciones": "trans", "Ticket promedio": "ticket"}[met]
-    etq = [lbl_ym(ym_prev), lbl_ym(ym)]
-    vals = [kp[clave], k[clave]]
-    cols_b = [GRIS_BAR, AZUL]
-    formas = ["", ""]
-    if clave == "venta":
-        etq.append("Meta"); vals.append(meta); cols_b.append(FONDO); formas.append("x")
-    fmt = (lambda x: soles(x)) if clave == "venta" else ((lambda x: f"{x:,.0f}") if clave == "trans" else (lambda x: f"S/ {x:,.1f}"))
-    figk = go.Figure(go.Bar(
-        x=etq, y=[0 if pd.isna(v) else v for v in vals],
-        marker=dict(color=cols_b, line=dict(color=TXT, width=1.5),
-                    pattern=dict(shape=formas, fgcolor=GRIS_LIN, bgcolor=cols_b, size=6, solidity=0.35)),
-        text=[fmt(v) for v in vals], textposition="outside", textfont=dict(size=12, color=TXT),
-        hovertemplate="%{x}: %{text}<extra></extra>"))
-    figk.update_yaxes(visible=False)
-    mostrar(figk)
-    alt(f"Barras que comparan {met.lower()}: " + "; ".join(f"{e}: {fmt(v)}" for e, v in zip(etq, vals)) + ".")
-    if clave == "ticket":
-        aviso("La data de comensales tiene problemas de calidad; evalúa el ticket con cautela.", "▲ Atención:")
-    v1 = var_pct(k[clave], kp[clave])
-    mini(f"Var. vs {lbl_ym(ym_prev)}", "—" if v1 is None else f"{v1:+.1f}%", "nd" if v1 is None else estado(100 + v1))
-    if clave == "venta":
-        vm = var_pct(k["venta"], meta)
-        mini("Var. vs meta", "—" if vm is None else f"{vm:+.2f}%", "nd" if vm is None else estado(100 + vm))
-
-# --- Descomposición de la brecha (movida desde la Capa 3: es una vista global) ---
-st.write("")
-col_g, col_h = st.columns([2, 1])
-with col_g:
-    ptit("DESCOMPOSICIÓN DE LA BRECHA DE VENTA")
-    dim3_lbl = st.selectbox("Dimensión", ["Familia"] + (["Turno"] if tiene_turno else []))
-    b = brecha(dim3_lbl.lower())
-    if b is None:
-        aviso(f"Se necesita venta de {lbl_ym(ym_prev)} para repartir la meta por {dim3_lbl.lower()}.")
-    else:
-        if len(b) > 6:
-            top = b.reindex(b.abs().nlargest(6).index).sort_values()
-            b = pd.concat([top, pd.Series({"Otros": b.drop(top.index).sum()})])
-        textos = [f"{'▲' if v >= 0 else '▼'} {soles_s(v)}" for v in list(b.values) + [b.sum()]]
-        figb = go.Figure(go.Waterfall(
-            x=list(b.index) + ["Total"], y=list(b.values) + [0],
-            measure=["relative"] * len(b) + ["total"],
-            text=textos, textposition="outside", textfont=dict(size=12, color=TXT),
-            connector=dict(line=dict(color=GRIS_LIN, width=1.5)),
-            increasing=dict(marker=dict(color=AZUL, line=dict(color=AZUL_OSC, width=1.5))),
-            decreasing=dict(marker=dict(color=BERM, line=dict(color=MAL_BORDE, width=1.5))),
-            totals=dict(marker=dict(color=BERM if b.sum() < 0 else AZUL, line=dict(color=TXT, width=2)))))
-        figb.update_yaxes(title="S/")
-        figb.update_layout(showlegend=False)
-        mostrar(figb)
-        st.caption("Supuesto: la meta se reparte según la participación de cada elemento en el año anterior. "
-                   "▲ aporta a la meta · ▼ resta a la meta.")
-        peor_e, mejor_e = b.drop("Otros", errors="ignore").idxmin(), b.drop("Otros", errors="ignore").idxmax()
-        alt(f"Gráfico de cascada de la contribución de cada {dim3_lbl.lower()} a la brecha de venta frente a la meta. "
-            f"La brecha total es {soles_s(b.sum())}. La mayor caída es {peor_e} ({soles_s(b[peor_e])}) y "
-            f"el mayor aporte {'positivo ' if b[mejor_e] >= 0 else ''}es {mejor_e} ({soles_s(b[mejor_e])}). "
-            "Las barras que bajan restan a la meta y las que suben suman; la última columna es el total.")
-with col_h:
-    ptit("LECTURA DE LA BRECHA (en texto)")
-    if b is not None:
-        for nombre, v in b.items():
-            st.markdown(f"- {'▲' if v >= 0 else '▼'} **{nombre}**: {soles_s(v)}")
-        st.markdown(f"**Brecha total: {soles_s(b.sum())}**")
-        st.caption("El detalle numérico por elemento (venta real, meta asignada y cumplimiento) está en la Capa 3.")
-
-# ----------------------------------------------------------------------------
-# CAPA 3 – Diagnóstico
-# ----------------------------------------------------------------------------
-st.write("")
-cabecera(3, "DIAGNÓSTICO", "¿Por qué pasa esto?", "Detalle y análisis para investigar las causas raíz.")
-col_e, col_f = st.columns(2)
 
 with col_e:
-    ptit("TOP 5 FAMILIAS – variación vs mismo período")
+    st.markdown("**TOP 5 FAMILIAS – variación vs mismo período**")
     modo = st.radio("Orden", ["Mayor crecimiento", "Mayor caída"], horizontal=True, label_visibility="collapsed")
     if prev.empty:
-        aviso("Sin datos del año anterior para comparar.")
+        st.info("Sin datos del año anterior para comparar.")
     else:
         tf = variaciones("familia", prev["venta"].sum() * 0.005)
         tf = tf.sort_values("Var. %", ascending=(modo == "Mayor caída")).head(5)
-        tabla(tf[["familia", "Venta", "Var. %"]], column_config={
+        tf["Tendencia"] = tf["Var. %"].map(tendencia)
+        tabla(tf[["familia", "Venta", "Var. %", "Tendencia"]], column_config={
             "familia": "Familia",
             "Venta": st.column_config.NumberColumn(format="S/ %.0f"),
             "Var. %": st.column_config.NumberColumn(format="%+.1f%%")})
         st.caption("Se excluyen familias con menos de 0.5% de la venta del año anterior.")
 
 with col_f:
-    ptit("TOP 5 PRODUCTOS – mayor caída")
+    st.markdown("**TOP 5 PRODUCTOS – mayor caída**")
     if prev.empty:
-        aviso("Sin datos del año anterior para comparar.")
+        st.info("Sin datos del año anterior para comparar.")
     else:
         min_prod = st.number_input("Venta mínima año anterior (S/)", 0, 1_000_000, 1000, step=500)
         tp = variaciones("producto", float(min_prod)).sort_values("Var. %").head(5)
         tp = tp[tp["Var. %"] < 0]
         if tp.empty:
-            aviso("Ningún producto cae respecto al año anterior con ese filtro.", "✓")
+            st.success("Ningún producto cae respecto al año anterior con ese filtro.")
         else:
-            tabla(tp[["producto", "Venta", "Var. %", "Impacto S/"]], column_config={
+            tp["Tendencia"] = tp["Var. %"].map(tendencia)
+            tabla(tp[["producto", "Venta", "Var. %", "Tendencia", "Impacto S/"]], column_config={
                 "producto": "Producto",
                 "Venta": st.column_config.NumberColumn(format="S/ %.0f"),
                 "Var. %": st.column_config.NumberColumn(format="%+.1f%%"),
@@ -845,34 +782,34 @@ with col_f:
                     "Impacto", format="S/ %.0f", min_value=float(tp["Impacto S/"].min()), max_value=0.0)})
             st.caption("Candidatos a revisar su permanencia en la carta.")
 
-# --- Detalle de la brecha (tabla que respalda el gráfico de la Capa 2) ---
 st.write("")
-ptit(f"DETALLE DE LA BRECHA POR {dim3_lbl.upper()} (respalda el gráfico de la Capa 2)")
-det = brecha_detalle(dim3_lbl.lower())
-if det is None:
-    aviso(f"Se necesita venta de {lbl_ym(ym_prev)} para repartir la meta por {dim3_lbl.lower()}.")
-else:
-    det = det.reset_index().rename(columns={"index": dim3_lbl})
-    det.insert(len(det.columns), "Estado", [f"{ESTADOS[estado(p)]['icono']} {ESTADOS[estado(p)]['txt']}" for p in det["Cumplimiento %"]])
-    tabla(det, column_config={
-        "Venta real": st.column_config.NumberColumn(format="S/ %.0f"),
-        "Meta asignada": st.column_config.NumberColumn(format="S/ %.0f"),
-        "Brecha": st.column_config.NumberColumn("Brecha (S/)", format="%+.0f"),
-        "Cumplimiento %": st.column_config.NumberColumn(format="%.1f%%")})
-    st.caption("Ordenado de la mayor caída al mayor aporte. El estado combina icono y texto (no depende del color).")
+with st.expander(f"📋 Detalle de la brecha de venta por {dim3_lbl.lower()} (tabla del gráfico de la Capa 2)", expanded=True):
+    if dbrecha is None:
+        st.info(f"Se necesita venta de {lbl_ym(ym_prev)} para repartir la meta por {dim3_lbl.lower()}.")
+    else:
+        td = dbrecha.sort_values("brecha").copy()
+        td.loc["TOTAL"] = [td["venta"].sum(), td["meta"].sum(), td["brecha"].sum()]
+        td["Brecha %"] = np.where(td["meta"] > 0, (td["venta"] / td["meta"].replace(0, np.nan) - 1) * 100, np.nan)
+        td["Estado"] = np.where(td["brecha"] >= 0, "▲ Sobre la meta", "▼ Bajo la meta")
+        td.index.name = dim3_lbl
+        td = td.reset_index().rename(columns={"venta": "Venta real", "meta": "Meta asignada", "brecha": "Brecha S/"})
+        tabla(td, column_config={
+            "Venta real": st.column_config.NumberColumn(format="S/ %.0f"),
+            "Meta asignada": st.column_config.NumberColumn(format="S/ %.0f"),
+            "Brecha S/": st.column_config.NumberColumn(format="%+.0f"),
+            "Brecha %": st.column_config.NumberColumn(format="%+.1f%%")})
+        st.caption("Misma información del gráfico de cascada, en formato tabla (alternativa accesible).")
 
-# --- Meta diaria por tienda y día de la semana (movida desde la Capa 2: es detalle) ---
-st.write("")
-ptit("DETALLE: META DIARIA POR TIENDA Y DÍA DE LA SEMANA")
-t = meta_tbl.copy()
-t.loc["TOTAL (suma de tiendas)"] = t.sum()
-t["Meta del mes"] = pd.concat([meta_tbl.mul(
-    pd.Series({DIAS[i]: sum(1 for f in meta_s.index if f.day_of_week == i) for i in range(7)}), axis=1
-).sum(axis=1), pd.Series({"TOTAL (suma de tiendas)": meta})])
-t.index.name = "Tienda"
-tabla(t.reset_index(), column_config={c: st.column_config.NumberColumn(format="S/ %.0f") for c in t.columns})
-st.caption("Meta por tienda y día de la semana, repartida según la venta promedio del año anterior "
-           f"para ese día. La suma de todas las metas del mes = {soles(meta)}.")
+with st.expander("📋 Meta diaria por tienda y día de la semana", expanded=True):
+    t = meta_tbl.copy()
+    t.loc["TOTAL (suma de tiendas)"] = t.sum()
+    t["Meta del mes"] = pd.concat([meta_tbl.mul(
+        pd.Series({DIAS[i]: sum(1 for f in meta_s.index if f.day_of_week == i) for i in range(7)}), axis=1
+    ).sum(axis=1), pd.Series({"TOTAL (suma de tiendas)": meta})])
+    t.index.name = "Tienda"
+    tabla(t.reset_index(), column_config={c: st.column_config.NumberColumn(format="S/ %.0f") for c in t.columns})
+    st.caption("Meta por tienda y día de la semana, repartida según la venta promedio del año anterior "
+               f"para ese día. La suma de todas las metas del mes = {soles(meta)}.")
 
 with st.expander("Calidad de datos y detalle"):
     st.write(f"Filas del mes: {len(cur):,} · Filas {lbl_ym(ym_prev)}: {len(prev):,}")
@@ -881,56 +818,42 @@ with st.expander("Calidad de datos y detalle"):
         st.write(f"Comensales > {tope_comens} por fila: {(cm > tope_comens).sum():,} registros")
 
 # ----------------------------------------------------------------------------
-# Auditoría de accesibilidad (contraste medido con la fórmula WCAG / WebAIM)
+# Auditoría de accesibilidad (contraste verificable en WebAIM)
 # ----------------------------------------------------------------------------
-PARES = [  # (elemento, texto/gráfico, fondo, tipo)
-    ("Texto principal sobre la página", TXT, FONDO, "texto"),
-    ("Texto secundario y leyendas", TXT_SUB, FONDO, "texto"),
-    ("Valor y etiqueta de tarjeta KPI", "#FFFFFF", KPI_BG, "texto"),
-    ("Subtexto de tarjeta KPI", KPI_SUB, KPI_BG, "texto"),
-    ("Etiqueta «CAPA n»", "#FFFFFF", GRANATE, "texto"),
-    ("Pregunta de la capa", GRANATE, FONDO, "texto"),
-    ("Conclusión", TXT, CONCL_BG, "texto"),
-    ("Estado «Cumple»", PILL["ok"][1], PILL["ok"][0], "texto"),
-    ("Estado «En observación»", PILL["obs"][1], PILL["obs"][0], "texto"),
-    ("Estado «No cumple»", PILL["mal"][1], PILL["mal"][0], "texto"),
-    ("Estado «Sin dato»", PILL["nd"][1], PILL["nd"][0], "texto"),
-    ("Gráfico: barra «Cumple» vs fondo", AZUL, FONDO, "gráfico"),
-    ("Gráfico: barra «No cumple» vs fondo", BERM, FONDO, "gráfico"),
-    ("Gráfico: borde de «En observación» vs fondo", OBS_BORDE, FONDO, "gráfico"),
-    ("Gráfico: línea de meta vs fondo", GRIS_LIN, FONDO, "gráfico"),
-    ("Gráfico: año anterior vs fondo", PREV_LIN, FONDO, "gráfico"),
-    ("Gráfico: barra neutra vs fondo", GRIS_BAR, FONDO, "gráfico"),
-    ("Barra de progreso «Cumple» vs tarjeta", CELESTE, KPI_BG, "gráfico"),
-    ("Barra de progreso «En observación» vs tarjeta", AMBAR, KPI_BG, "gráfico"),
-    ("Barra de progreso «No cumple» vs tarjeta", BERM, KPI_BG, "gráfico"),
-]
-
-
-def nivel(r, tipo):
-    if tipo == "texto":
-        return "AAA ✓" if r >= 7 else ("AA ✓ (falta para AAA)" if r >= 4.5 else "✗ Falla")
-    return "AA ✓ (1.4.11)" if r >= 3 else "✗ Falla"
-
-
-with st.expander("♿ Auditoría de accesibilidad (WCAG 2.1) – contraste y lista de control"):
-    st.markdown("Contraste calculado con la **misma fórmula WCAG 2.x** que usa "
-                "[WebAIM Contrast Checker](https://webaim.org/resources/contrastchecker/). "
-                "Cada enlace «Verificar» abre WebAIM con los dos colores ya cargados. "
-                "Texto: AA ≥ 4.5:1, AAA ≥ 7:1 · Gráficos y bordes: AA ≥ 3:1 (criterio 1.4.11).")
-    filas = ["| Elemento | Color | Fondo | Contraste | Nivel | WebAIM |", "|---|---|---|---|---|---|"]
-    for nom, fg, bg, tp_ in PARES:
-        r_ = contraste(fg, bg)
-        filas.append(f"| {nom} | `{fg}` | `{bg}` | **{r_:.2f}:1** | {nivel(r_, tp_)} | [Verificar]({webaim(fg, bg)}) |")
+st.write("")
+with st.expander("♿ Auditoría de accesibilidad – contraste WCAG (verifica cada par en WebAIM)", expanded=False):
+    st.caption(f"Modo auditado: **{'Alto contraste AAA' if alto else 'Normal'}**. Texto: AAA exige 7:1. "
+               "Elementos gráficos (barras, líneas, bordes): WCAG 1.4.11 exige 3:1. "
+               "La razón se calcula con la misma fórmula de WebAIM; el enlace abre el verificador con los colores cargados.")
+    B = BASE
+    pares = [  # (elemento, color primer plano, color fondo, mínimo exigido)
+        ("Texto principal sobre el fondo", B["TXT"], B["BG"], 7),
+        ("Texto secundario / subtítulos", B["TXT2"], B["BG"], 7),
+        ("Texto de las tarjetas KPI", B["TXT"], B["CARD"], 7),
+        ("Subtítulo de las tarjetas KPI", B["TXT2"], B["CARD"], 7),
+        ("Etiqueta «CAPA 1»", B["TAGTXT"], B["TAG1"], 7),
+        ("Etiqueta «CAPA 2»", B["TAGTXT"], B["TAG2"], 7),
+        ("Etiqueta «CAPA 3»", B["TAGTXT"], B["TAG3"], 7),
+        ("Estado «bien» (▲)", B["PILL_OK"][1], B["PILL_OK"][0], 7),
+        ("Estado «mal» (▼) y conclusión", B["PILL_NO"][1], B["PILL_NO"][0], 7),
+        ("Estado «sin comparativa»", B["PILL_NEU"][1], B["PILL_NEU"][0], 7),
+        ("Barra «cumple» (azul) vs. fondo", B["OK"], B["BG"], 3),
+        ("Borde de barra «no cumple» (naranja rayado) vs. fondo", B["TXT"], B["BG"], 3),
+        ("Línea de meta vs. fondo", B["META"], B["BG"], 3),
+        ("Línea media móvil vs. fondo", B["MOVIL"], B["BG"], 3),
+        ("Línea año anterior vs. fondo", B["PREV"], B["BG"], 3),
+        ("Barra neutra («Otros», período anterior) vs. fondo", B["NEUTRO"], B["BG"], 3),
+    ]
+    filas = ["| Elemento | Primer plano | Fondo | Razón | Exigido | Resultado | WebAIM |", "|---|---|---|---|---|---|---|"]
+    n_ok = 0
+    for nombre, fg, bg, minimo in pares:
+        r = contraste(fg, bg)
+        ok = r >= minimo
+        n_ok += ok
+        nivel = ("AAA ✔" if minimo == 7 else "WCAG 1.4.11 ✔") if ok else "✖ No cumple"
+        url = f"{WEBAIM}?fcolor={fg.lstrip('#')}&bcolor={bg.lstrip('#')}"
+        filas.append(f"| {nombre} | `{fg}` | `{bg}` | **{r:.2f}:1** | {minimo}:1 | {nivel} | [Verificar ↗]({url}) |")
     st.markdown("\n".join(filas))
-    st.markdown(
-        "**Lista de control (Sesión 12)**\n\n"
-        "- ✓ Escala de grises: usa el simulador de visión; los estados se distinguen por trama (sólido / rayado / punteado).\n"
-        "- ✓ Razón WCAG: 4.5:1 mínimo en texto (aquí ≥ 7:1) y 3:1 en gráficos.\n"
-        "- ✓ Etiquetas: cada estado lleva icono + texto, nunca solo color (1.4.1).\n"
-        "- ✓ Simulación de daltonismo: protanopia y deuteranopia disponibles.\n"
-        "- ✓ Alt text: cada gráfico tiene su «Texto alternativo» (1.1.1).\n"
-        "- ✓ Teclado: filtros, pestañas y desplegables nativos operables con Tab / Enter / Espacio (2.1.1).\n"
-        "- ✓ Chunking: contenido en 3 capas y bloques; títulos descriptivos por panel (2.4.6).\n"
-        "- ✓ Localización: fechas DD/MM/AAAA y montos en S/."
-    )
+    st.markdown(f"**Resultado: {n_ok} de {len(pares)} pares cumplen.** "
+                "Nota: el naranja Okabe-Ito (#E69F00) sobre blanco no llega a 3:1, por eso las barras «no cumple» "
+                "llevan **rayado + borde oscuro** (el borde es lo que aporta el contraste y el rayado evita depender del color).")
