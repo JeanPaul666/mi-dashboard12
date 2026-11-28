@@ -131,6 +131,10 @@ CSS = """
 .capa .preg {color:__TXT__; text-decoration:underline; text-decoration-thickness:2px; text-underline-offset:3px;}
 .capa .sub {color:__TXT2__; font-size:.88rem;}
 .kpi {border:__BW__px solid __TXT2__; background:__CARD__; color:__TXT__; border-radius:10px; padding:14px 16px; height:100%;}
+.kpi.principal {border:4px solid __TAG2__; background:__BG__; box-shadow:0 4px 0 __TAG2__;}
+.kpi.principal .val {font-size:2.7rem;}
+.kpi .chip {display:inline-block; margin-bottom:8px; padding:2px 10px; border-radius:4px; font-size:.78rem; font-weight:800;
+            background:__TAG2__; color:__TAGTXT__; letter-spacing:.04em;}
 .kpi .lbl {font-size:.78rem; font-weight:800; letter-spacing:.04em; color:__TXT2__;}
 .kpi .val {font-size:2rem; font-weight:800; line-height:1.15; color:__TXT__;}
 .kpi .sub {font-size:.85rem; color:__TXT2__;}
@@ -230,7 +234,7 @@ def cabecera(n, titulo, pregunta, sub):
     )
 
 
-def tarjeta(titulo, valor, sub="", pill="", clase="", barra=None, estado_barra="ok"):
+def tarjeta(titulo, valor, sub="", pill="", clase="", barra=None, estado_barra="ok", principal=False):
     barra_html = ""
     if barra is not None:
         w = min(max(barra, 0), 100)
@@ -238,7 +242,8 @@ def tarjeta(titulo, valor, sub="", pill="", clase="", barra=None, estado_barra="
                       f'aria-valuemax="100" aria-valuenow="{w:.0f}"><div class="{estado_barra}" style="width:{w:.2f}%"></div></div>')
     pill_html = f'<div class="pill {clase}">{pill}</div>' if pill else ""
     st.markdown(
-        f'<div class="kpi" role="group" aria-label="{esc(titulo)}"><div class="lbl">{titulo}</div><div class="val">{valor}</div>'
+        f'<div class="kpi{" principal" if principal else ""}" role="group" aria-label="{esc(titulo)}">'
+        f'{"<div class=chip>★ INDICADOR PRINCIPAL</div>" if principal else ""}<div class="lbl">{titulo}</div><div class="val">{valor}</div>'
         f'{barra_html}<div class="sub">{sub}</div>{pill_html}</div>',
         unsafe_allow_html=True,
     )
@@ -520,11 +525,11 @@ else:
 st.markdown(f'<div class="concl {"" if bajo else "ok"}" role="status"><b>Conclusión:</b> {txt}</div>', unsafe_allow_html=True)
 st.write("")
 
-c1, c2, c3, c4 = st.columns(4)
+c1, c2, c3, c4 = st.columns([1.5, 1, 1, 1])
 with c1:
     tarjeta("VENTA TOTAL DEL MES", soles(k["venta"]), f"Meta: {soles(meta)}  ·  "
             + (f"faltan {soles(meta - k['venta'])}" if bajo else "meta superada"),
-            barra=cumpl, estado_barra="no" if bajo else "ok")
+            barra=cumpl, estado_barra="no" if bajo else "ok", principal=True)
 with c2:
     dpp = cumpl - 100
     tarjeta("% CUMPLIMIENTO DE VENTA", f"{cumpl:.2f} %", "Meta definida al inicio del mes",
